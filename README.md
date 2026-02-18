@@ -51,7 +51,7 @@ No LLM in the loop. A regex match on `rm -rf` is either true or false.
 ## Install
 
 ```bash
-npm install agentguard
+npm install agentgrd
 ```
 
 ## Setup
