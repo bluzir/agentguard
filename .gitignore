@@ -1,0 +1,31 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Secrets & env
+.env
+.env.*
+.env.local
+.env.*.local
+.npmrc
+
+# Crypto keys
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Audit logs
+agentguard-audit.jsonl
+*.log
+
+# Internal docs
+SPEC.md
+PIVOT.md
+PRD.md
+
+# OS
+.DS_Store
+
+# Test coverage
+coverage/
