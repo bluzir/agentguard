@@ -1,0 +1,133 @@
+global:
+  profile: strict
+  workspace: ${CWD}
+  defaultAction: deny
+  requireSignedPolicy: false
+  onUndefinedTemplateVar: error
+
+audit:
+  sink: file
+  path: ./agentguard-audit.jsonl
+  includeArguments: true
+  includeResults: false
+
+approval:
+  enabled: false
+  mode: sync_wait
+  waitTimeoutSec: 90
+  onTimeout: deny
+  onConnectorError: deny
+  store:
+    engine: sqlite
+    path: ./.agentguard/approvals.db
+  channels:
+    telegram:
+      enabled: false
+      transport: polling
+      botToken: ""
+      allowedChatIds: []
+      approverUserIds: []
+      pollIntervalMs: 1500
+
+adapters:
+  openclaw:
+    enabled: true
+
+modules:
+  - kill_switch
+  - skill_scanner
+  - tool_policy
+  - fs_guard
+  - command_guard
+  - exec_sandbox
+  - egress_guard
+  - output_dlp
+  - rate_budget
+  - audit
+
+moduleConfig:
+  kill_switch:
+    enabled: true
+    envVar: AGENTGUARD_KILL_SWITCH
+    filePath: ./.agentguard/KILL_SWITCH
+    denyPhases:
+      - pre_request
+      - pre_tool
+    reason: emergency kill switch active: human safety override
+
+  skill_scanner:
+    scanOnStartup: true
+    scanOnReload: true
+    actionOnCritical: deny
+    requireSignature: true
+    requireSbom: true
+    requirePinnedSource: true
+    onProvenanceFailure: deny
+    # trustedSigners:
+    #   - security-team@your-domain
+
+  tool_policy:
+    default: deny
+    rules:
+      - tool: Read
+        action: allow
+        schema:
+          requiredArgs: [file_path]
+          argConstraints:
+            file_path:
+              type: string
+              maxLength: 4096
+      - tool: Bash
+        action: allow
+        schema:
+          requiredArgs: [command]
+          argConstraints:
+            command:
+              type: string
+              maxLength: 8000
+
+  fs_guard:
+    allowedPaths:
+      - ${workspace}
+      - /tmp
+    blockedPaths:
+      - ~/.ssh
+      - ~/.aws
+      - /etc
+    blockedBasenames:
+      - .env
+      - .env.local
+      - .env.development
+      - .env.production
+      - .env.test
+      - .envrc
+
+  command_guard:
+    denyPatterns:
+      - '(^|\s)sudo\s'
+      - 'rm\s+-rf\s+/'
+      - '(^|\s)(cat|less|more|head|tail|grep|awk|sed)\s+[^\n]*\.env(?:\.|\s|$)'
+
+  exec_sandbox:
+    engine: bwrap
+    required: true
+
+  egress_guard:
+    # Strict mode: explicit allowlist.
+    # Keep this short and task-specific.
+    allowedDomains:
+      - api.openai.com
+      - api.anthropic.com
+      - api.github.com
+      - github.com
+      - raw.githubusercontent.com
+      - registry.npmjs.org
+    allowedPorts: [443]
+    blockedPorts: [21, 22, 23, 25, 53, 110, 143]
+
+  output_dlp:
+    action: deny
+
+  rate_budget:
+    windowSec: 60
+    maxCallsPerWindow: 30

@@ -27,6 +27,11 @@ function nonEmpty(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
 export async function run(): Promise<void> {
   const { configPath } = parseArgs();
   const checks: Check[] = [];
@@ -50,6 +55,33 @@ export async function run(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     checks.push({ name: "Modules", status: "fail", message: msg });
+  }
+
+  // 2.1 Critical profile posture checks
+  const skillScanner = config.moduleConfig.skill_scanner as Record<string, unknown> | undefined;
+  if (config.global.profile === "strict") {
+    const requireSignature = skillScanner?.requireSignature === true;
+    const requireSbom = skillScanner?.requireSbom === true;
+    const requirePinnedSource = skillScanner?.requirePinnedSource === true;
+    const onProvenanceFailure = skillScanner?.onProvenanceFailure;
+
+    checks.push({
+      name: "Strict provenance policy",
+      status:
+        requireSignature &&
+        requireSbom &&
+        requirePinnedSource &&
+        onProvenanceFailure === "deny"
+          ? "ok"
+          : "warn",
+      message:
+        requireSignature &&
+        requireSbom &&
+        requirePinnedSource &&
+        onProvenanceFailure === "deny"
+          ? "signature + SBOM + pinning enforced"
+          : "strict profile should enforce signature/SBOM/pinning with deny on failure",
+    });
   }
 
   // 3. Approval readiness (when enabled)
@@ -191,6 +223,37 @@ export async function run(): Promise<void> {
     checks.push({ name: "Workspace", status: "ok", message: config.global.workspace });
   } else {
     checks.push({ name: "Workspace", status: "warn", message: `not found: ${config.global.workspace}` });
+  }
+
+  // 4.1 Secrets architecture posture
+  const fsGuard = (config.moduleConfig.fs_guard ?? {}) as Record<string, unknown>;
+  const blockedBasenames = asStringArray(fsGuard.blockedBasenames).map((v) =>
+    v.trim().toLowerCase(),
+  );
+  const blocksDotEnv = blockedBasenames.includes(".env");
+  checks.push({
+    name: "Dotenv read policy",
+    status:
+      blocksDotEnv || config.global.profile !== "strict" ? "ok" : "fail",
+    message: blocksDotEnv
+      ? '.env basename is blocked by fs_guard'
+      : 'strict profile should block ".env" via fs_guard.blockedBasenames',
+  });
+
+  const dotEnvPath = path.join(config.global.workspace, ".env");
+  if (fs.existsSync(dotEnvPath)) {
+    checks.push({
+      name: "Workspace .env",
+      status: "warn",
+      message:
+        ".env found in workspace. Prefer ephemeral/scoped credentials for agent runtime.",
+    });
+  } else {
+    checks.push({
+      name: "Workspace .env",
+      status: "ok",
+      message: "not found",
+    });
   }
 
   // 5. Audit sink writable

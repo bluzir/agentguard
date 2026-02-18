@@ -36,6 +36,10 @@ export interface Artifact {
   content: string;
   sourceUri?: string;
   sha256?: string;
+  signatureVerified?: boolean;
+  signer?: string;
+  sbomUri?: string;
+  versionPinned?: boolean;
 }
 
 export interface GuardEvent {

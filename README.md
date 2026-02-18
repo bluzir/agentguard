@@ -90,6 +90,18 @@ npx agentguard init --framework openclaw --profile balanced
 
 This creates `agentguard.yaml` and wires the adapter for your orchestrator.
 
+What gets generated (turnkey wiring):
+
+- `openclaw`:
+  - `.agentguard/openclaw-hook.command.sh`
+  - `.agentguard/openclaw-hooks.json` (`hooks.PreToolUse/PostToolUse`, matcher-based)
+- `claude-telegram`:
+  - `.agentguard/claude-telegram.module.yaml`
+  - `.agentguard/claude-tool-hook.command.sh`
+  - `.claude/settings.local.json` is auto-patched to add `PreToolUse/PostToolUse` command hooks without overwriting existing `permissions`
+
+Hook scripts resolve config path via script directory (`$SCRIPT_DIR`) so they keep working regardless of current shell working directory.
+
 Check that everything is configured:
 
 ```bash
@@ -103,6 +115,64 @@ npx agentguard pentest
 ```
 
 Supported frameworks: `openclaw`, `nanobot`, `claude-telegram`, `generic`.
+
+## Custom adapter for Claude Code-based orchestrators
+
+If your orchestrator is built on Claude Code hooks but has its own runtime/protocol, use a custom adapter runner.
+
+Ready example:
+- `examples/claude-custom-adapter-runner.mjs`
+
+What this adapter does:
+- maps Claude hook payload (`hook_event_name`, `tool_name`, `tool_input`, `tool_response`) to canonical `GuardEvent`
+- runs the standard agentguard pipeline (`runPipeline`)
+- maps decision back to Claude command-hook response JSON:
+  - allow -> `{ "continue": true }`
+  - deny/challenge -> `{ "decision": "block", "reason": "..." }`
+
+Hook wiring (`.claude/settings.local.json`):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./examples/claude-custom-adapter-runner.mjs --config ./agentguard.yaml"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./examples/claude-custom-adapter-runner.mjs --config ./agentguard.yaml"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Quick local check:
+
+```bash
+echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sudo id"}}' \
+  | node ./examples/claude-custom-adapter-runner.mjs --config ./agentguard.yaml
+```
+
+Expected output (strict/balanced profile):
+
+```json
+{"decision":"block","reason":"command_guard: denied by pattern ..."}
+```
 
 ### Channel-aware approvals (`auto`)
 

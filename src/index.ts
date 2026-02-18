@@ -50,6 +50,7 @@ export { loadConfig, getProfile, PROFILES } from "./config/index.js";
 // Modules
 export {
   BaseModule,
+  KillSwitchModule,
   ToolPolicyModule,
   FsGuardModule,
   CommandGuardModule,

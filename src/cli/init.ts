@@ -67,6 +67,33 @@ export async function run(): Promise<void> {
 
   const profileConfig = getProfile(resolvedProfile);
   const modules = [...(profileConfig.modules ?? [])];
+  const profileFsGuard =
+    (profileConfig.moduleConfig?.fs_guard as Record<string, unknown>) ?? {};
+  const profileCommandGuard =
+    (profileConfig.moduleConfig?.command_guard as Record<string, unknown>) ?? {};
+
+  const defaultCommandDenyPatterns =
+    resolvedProfile === "strict"
+      ? [
+          "(^|\\s)sudo\\s",
+          "rm\\s+-rf\\s+/",
+          "(^|\\s)(cat|less|more|head|tail|grep|awk|sed)\\s+[^\\n]*\\.env(?:\\.|\\s|$)",
+        ]
+      : ["(^|\\s)sudo\\s", "rm\\s+-rf\\s+/"];
+
+  const fsGuardBlockedBasenames =
+    (profileFsGuard.blockedBasenames as string[] | undefined) ?? [
+      ".env",
+      ".env.local",
+      ".env.development",
+      ".env.production",
+      ".env.test",
+      ".envrc",
+    ];
+
+  const commandGuardDenyPatterns =
+    (profileCommandGuard.denyPatterns as string[] | undefined) ??
+    defaultCommandDenyPatterns;
 
   if (approvals === "telegram" && !modules.includes("approval_gate")) {
     const auditIndex = modules.indexOf("audit");
@@ -175,18 +202,37 @@ export async function run(): Promise<void> {
       tool_policy: {
         ...((profileConfig.moduleConfig?.tool_policy as Record<string, unknown>) ?? {}),
         rules: [
-          { tool: "Read", action: "allow" },
-          { tool: "Bash", action: "allow" },
+          {
+            tool: "Read",
+            action: "allow",
+            schema: {
+              requiredArgs: ["file_path"],
+              argConstraints: {
+                file_path: { type: "string", maxLength: 4096 },
+              },
+            },
+          },
+          {
+            tool: "Bash",
+            action: "allow",
+            schema: {
+              requiredArgs: ["command"],
+              argConstraints: {
+                command: { type: "string", maxLength: 8000 },
+              },
+            },
+          },
         ],
       },
       fs_guard: {
-        ...((profileConfig.moduleConfig?.fs_guard as Record<string, unknown>) ?? {}),
+        ...profileFsGuard,
         allowedPaths: ["${workspace}", "/tmp"],
         blockedPaths: ["~/.ssh", "~/.aws", "/etc"],
+        blockedBasenames: fsGuardBlockedBasenames,
       },
       command_guard: {
-        ...((profileConfig.moduleConfig?.command_guard as Record<string, unknown>) ?? {}),
-        denyPatterns: ["(^|\\s)sudo\\s", "rm\\s+-rf\\s+/"],
+        ...profileCommandGuard,
+        denyPatterns: commandGuardDenyPatterns,
       },
     },
   };
@@ -194,6 +240,7 @@ export async function run(): Promise<void> {
   const outputPath = path.resolve(output);
   const yaml = toYaml(config, { lineWidth: 120 });
 
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, yaml);
 
   const wiring = generateWiringArtifacts({

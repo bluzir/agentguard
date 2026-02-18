@@ -5,6 +5,7 @@ import { CommandGuardModule } from "./command-guard.js";
 import { EgressGuardModule } from "./egress-guard.js";
 import { ExecSandboxModule } from "./exec-sandbox.js";
 import { FsGuardModule } from "./fs-guard.js";
+import { KillSwitchModule } from "./kill-switch.js";
 import { OutputDlpModule } from "./output-dlp.js";
 import { RateBudgetModule } from "./rate-budget.js";
 import { SkillScannerModule } from "./skill-scanner.js";
@@ -17,6 +18,7 @@ export { FsGuardModule } from "./fs-guard.js";
 export { CommandGuardModule } from "./command-guard.js";
 export { ExecSandboxModule } from "./exec-sandbox.js";
 export { EgressGuardModule } from "./egress-guard.js";
+export { KillSwitchModule } from "./kill-switch.js";
 export { OutputDlpModule } from "./output-dlp.js";
 export { RateBudgetModule } from "./rate-budget.js";
 export { ApprovalGateModule } from "./approval-gate.js";
@@ -27,6 +29,7 @@ export { VerdictProviderModule } from "./verdict-provider.js";
 type ModuleFactory = () => SecurityModule;
 
 const BUILTIN_MODULES: Record<string, ModuleFactory> = {
+  kill_switch: () => new KillSwitchModule(),
   tool_policy: () => new ToolPolicyModule(),
   fs_guard: () => new FsGuardModule(),
   command_guard: () => new CommandGuardModule(),

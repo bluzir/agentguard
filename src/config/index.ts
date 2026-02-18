@@ -43,6 +43,7 @@ const DEFAULT_CONFIG: AgentGuardConfig = {
   },
   adapters: {},
   modules: [
+    "kill_switch",
     "tool_policy",
     "fs_guard",
     "command_guard",

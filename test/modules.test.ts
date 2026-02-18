@@ -9,6 +9,7 @@ import { createModules } from "../src/modules/index.js";
 import { EgressGuardModule } from "../src/modules/egress-guard.js";
 import { ExecSandboxModule } from "../src/modules/exec-sandbox.js";
 import { FsGuardModule } from "../src/modules/fs-guard.js";
+import { KillSwitchModule } from "../src/modules/kill-switch.js";
 import { OutputDlpModule } from "../src/modules/output-dlp.js";
 import { RateBudgetModule } from "../src/modules/rate-budget.js";
 import { SkillScannerModule } from "../src/modules/skill-scanner.js";
@@ -26,6 +27,23 @@ function makeToolEvent(
 		sessionId: "test",
 		toolCall: { name: toolName, arguments: args },
 		metadata: {},
+	};
+}
+
+function makeLoadEvent(
+	content: string,
+	overrides: Partial<GuardEvent> = {},
+): GuardEvent {
+	return {
+		phase: GuardPhase.PRE_LOAD,
+		framework: "generic",
+		sessionId: "test-load",
+		artifact: {
+			kind: "skill",
+			content,
+		},
+		metadata: {},
+		...overrides,
 	};
 }
 
@@ -139,6 +157,114 @@ describe("ToolPolicyModule", () => {
 		);
 		expect(result.action).toBe(DecisionAction.DENY);
 	});
+
+	it("denies when required schema arg is missing", async () => {
+		const mod = new ToolPolicyModule();
+		mod.configure({
+			default: "deny",
+			rules: [
+				{
+					tool: "Bash",
+					action: "allow",
+					schema: {
+						requiredArgs: ["command"],
+						argConstraints: {
+							command: { type: "string" },
+						},
+					},
+				},
+			],
+		});
+
+		const result = await mod.evaluate(makeToolEvent("Bash", {}));
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("missing required arg");
+	});
+
+	it("denies when schema forbids unknown args", async () => {
+		const mod = new ToolPolicyModule();
+		mod.configure({
+			default: "deny",
+			rules: [
+				{
+					tool: "Read",
+					action: "allow",
+					schema: {
+						requiredArgs: ["file_path"],
+						allowedArgs: ["file_path"],
+						argConstraints: {
+							file_path: { type: "string" },
+						},
+					},
+				},
+			],
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Read", {
+				file_path: "/workspace/ok.txt",
+				exfil: true,
+			}),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("not allowlisted");
+	});
+
+	it("allows when schema constraints match", async () => {
+		const mod = new ToolPolicyModule();
+		mod.configure({
+			default: "deny",
+			rules: [
+				{
+					tool: "Bash",
+					action: "allow",
+					schema: {
+						requiredArgs: ["command"],
+						argConstraints: {
+							command: {
+								type: "string",
+								pattern: "^echo\\s",
+								maxLength: 40,
+							},
+						},
+					},
+				},
+			],
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Bash", { command: "echo safe" }),
+		);
+		expect(result.action).toBe(DecisionAction.ALLOW);
+	});
+});
+
+describe("KillSwitchModule", () => {
+	it("denies PRE_TOOL when env kill switch is active", async () => {
+		const mod = new KillSwitchModule();
+		mod.configure({ envVar: "AGENTGUARD_TEST_KILL_SWITCH" });
+
+		process.env.AGENTGUARD_TEST_KILL_SWITCH = "1";
+		try {
+			const result = await mod.evaluate(
+				makeToolEvent("Bash", { command: "echo hi" }),
+			);
+			expect(result.action).toBe(DecisionAction.DENY);
+		} finally {
+			delete process.env.AGENTGUARD_TEST_KILL_SWITCH;
+		}
+	});
+
+	it("allows when kill switch is inactive", async () => {
+		const mod = new KillSwitchModule();
+		mod.configure({ envVar: "AGENTGUARD_TEST_KILL_SWITCH" });
+
+		delete process.env.AGENTGUARD_TEST_KILL_SWITCH;
+		const result = await mod.evaluate(
+			makeToolEvent("Bash", { command: "echo hi" }),
+		);
+		expect(result.action).toBe(DecisionAction.ALLOW);
+	});
 });
 
 describe("FsGuardModule", () => {
@@ -178,6 +304,20 @@ describe("FsGuardModule", () => {
 
 		const result = await mod.evaluate(
 			makeToolEvent("Read", { file_path: "/etc/passwd" }),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+	});
+
+	it("denies blocked basename even inside allowed paths", async () => {
+		const mod = new FsGuardModule();
+		mod.configure({
+			allowedPaths: ["/workspace"],
+			blockedPaths: [],
+			blockedBasenames: [".env"],
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Read", { file_path: "/workspace/.env" }),
 		);
 		expect(result.action).toBe(DecisionAction.DENY);
 	});
@@ -520,6 +660,67 @@ describe("SkillScannerModule", () => {
 			"This is a normal skill that helps users write code.",
 		);
 		expect(findings).toHaveLength(0);
+	});
+
+	it("denies unsigned skill when signature is required", async () => {
+		const mod = new SkillScannerModule();
+		mod.configure({
+			requireSignature: true,
+			onProvenanceFailure: "deny",
+		});
+
+		const result = await mod.evaluate(
+			makeLoadEvent("Normal skill content"),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("missing_signature");
+	});
+
+	it("denies untrusted signer when trusted list is configured", async () => {
+		const mod = new SkillScannerModule();
+		mod.configure({
+			trustedSigners: ["security-team@agentguard.dev"],
+			onProvenanceFailure: "deny",
+		});
+
+		const result = await mod.evaluate(
+			makeLoadEvent("Normal skill content", {
+				artifact: {
+					kind: "skill",
+					content: "Normal skill content",
+					signatureVerified: true,
+					signer: "unknown@evil.test",
+				},
+			}),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("untrusted_signer");
+	});
+
+	it("allows signed/pinned skill with sbom when provenance is required", async () => {
+		const mod = new SkillScannerModule();
+		mod.configure({
+			requireSignature: true,
+			requireSbom: true,
+			requirePinnedSource: true,
+			trustedSigners: ["security-team@agentguard.dev"],
+			onProvenanceFailure: "deny",
+		});
+
+		const result = await mod.evaluate(
+			makeLoadEvent("This is a normal skill that helps users write code.", {
+				artifact: {
+					kind: "skill",
+					content: "This is a normal skill that helps users write code.",
+					signatureVerified: true,
+					signer: "security-team@agentguard.dev",
+					sbomUri: "file:///workspace/skills/example.sbom.json",
+					versionPinned: true,
+					sourceUri: "npm:@scope/example-skill@1.2.3",
+				},
+			}),
+		);
+		expect(result.action).toBe(DecisionAction.ALLOW);
 	});
 });
 

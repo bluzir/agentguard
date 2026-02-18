@@ -99,6 +99,19 @@ export class AuditModule extends BaseModule {
       }
     }
 
+    if (event.artifact) {
+      entry.artifact = {
+        kind: event.artifact.kind,
+        path: event.artifact.path,
+        sourceUri: event.artifact.sourceUri,
+        sha256: event.artifact.sha256,
+        signatureVerified: event.artifact.signatureVerified,
+        signer: event.artifact.signer,
+        sbomUri: event.artifact.sbomUri,
+        versionPinned: event.artifact.versionPinned,
+      };
+    }
+
     if (event.toolResult && this.includeResults) {
       entry.toolResult = {
         isError: event.toolResult.isError,

@@ -10,6 +10,12 @@ interface SkillScannerConfig {
   actionOnCritical?: "deny" | "challenge" | "alert";
   allowDomains?: string[];
   blockDomains?: string[];
+  requireSignature?: boolean;
+  requireSbom?: boolean;
+  requirePinnedSource?: boolean;
+  trustedSigners?: string[];
+  enforceKinds?: Array<"skill" | "prompt" | "tool_metadata" | "config">;
+  onProvenanceFailure?: "deny" | "challenge" | "alert";
 }
 
 export interface ScanFinding {
@@ -58,6 +64,12 @@ export class SkillScannerModule extends BaseModule {
   private minEncodedLength = 80;
   private entropyThreshold = 4.2;
   private blockDomains: string[] = [];
+  private requireSignature = false;
+  private requireSbom = false;
+  private requirePinnedSource = false;
+  private trustedSigners: string[] = [];
+  private enforceKinds = new Set<"skill" | "prompt" | "tool_metadata" | "config">(["skill"]);
+  private onProvenanceFailure: "deny" | "challenge" | "alert" = "deny";
 
   override configure(config: Record<string, unknown>): void {
     super.configure(config);
@@ -66,9 +78,24 @@ export class SkillScannerModule extends BaseModule {
     this.minEncodedLength = c.minEncodedLength ?? 80;
     this.entropyThreshold = c.entropyThreshold ?? 4.2;
     this.blockDomains = c.blockDomains ?? [];
+    this.requireSignature = c.requireSignature ?? false;
+    this.requireSbom = c.requireSbom ?? false;
+    this.requirePinnedSource = c.requirePinnedSource ?? false;
+    this.trustedSigners = c.trustedSigners ?? [];
+    this.enforceKinds = new Set(c.enforceKinds ?? ["skill"]);
+    this.onProvenanceFailure = c.onProvenanceFailure ?? "deny";
   }
 
   async evaluate(event: GuardEvent): Promise<Decision> {
+    const provenanceFindings = this.scanProvenance(event);
+    if (provenanceFindings.length > 0) {
+      return this.applyFailurePolicy(
+        provenanceFindings,
+        this.onProvenanceFailure,
+        "provenance findings",
+      );
+    }
+
     const content = this.getContent(event);
     if (!content) {
       return this.allow("no content to scan");
@@ -83,24 +110,11 @@ export class SkillScannerModule extends BaseModule {
     const summary = findings.map((f) => `${f.ruleId}(${f.severity})`).join(", ");
 
     if (maxSeverity === "critical") {
-      switch (this.actionOnCritical) {
-        case "deny":
-          return this.deny(`critical findings: ${summary}`, "critical");
-        case "challenge":
-          return {
-            action: "challenge" as Decision["action"],
-            module: this.name,
-            reason: `critical findings require approval: ${summary}`,
-            severity: "critical",
-            challenge: {
-              channel: "orchestrator",
-              prompt: `Suspicious content detected:\n${findings.map((f) => `- ${f.ruleId}: ${f.excerpt}`).join("\n")}\n\nAllow?`,
-              timeoutSec: 300,
-            },
-          };
-        case "alert":
-          return this.alert(`critical findings: ${summary}`, "critical");
-      }
+      return this.applyFailurePolicy(
+        findings,
+        this.actionOnCritical,
+        "critical findings",
+      );
     }
 
     return this.alert(`findings: ${summary}`, maxSeverity);
@@ -224,5 +238,109 @@ export class SkillScannerModule extends BaseModule {
       }
     }
     return max;
+  }
+
+  private scanProvenance(event: GuardEvent): ScanFinding[] {
+    if (event.phase !== GuardPhase.PRE_LOAD) {
+      return [];
+    }
+
+    const artifact = event.artifact;
+    if (!artifact) {
+      return [];
+    }
+
+    if (!this.enforceKinds.has(artifact.kind)) {
+      return [];
+    }
+
+    const findings: ScanFinding[] = [];
+
+    if (this.requireSignature && artifact.signatureVerified !== true) {
+      findings.push({
+        ruleId: "missing_signature",
+        severity: "critical",
+        confidence: "high",
+        excerpt: "artifact is not signature-verified",
+      });
+    }
+
+    if (this.trustedSigners.length > 0) {
+      const signer = (artifact.signer ?? "").trim();
+      if (!signer) {
+        findings.push({
+          ruleId: "missing_signer_identity",
+          severity: "high",
+          confidence: "high",
+          excerpt: "trusted signers are configured but signer is missing",
+        });
+      } else if (!this.trustedSigners.includes(signer)) {
+        findings.push({
+          ruleId: "untrusted_signer",
+          severity: "critical",
+          confidence: "high",
+          excerpt: `signer "${signer}" is not in trustedSigners`,
+        });
+      }
+    }
+
+    if (this.requireSbom && !artifact.sbomUri) {
+      findings.push({
+        ruleId: "missing_sbom",
+        severity: "high",
+        confidence: "high",
+        excerpt: "artifact missing sbomUri",
+      });
+    }
+
+    if (this.requirePinnedSource && artifact.versionPinned !== true) {
+      const source = artifact.sourceUri ?? "unknown-source";
+      findings.push({
+        ruleId: this.isLikelyFloatingReference(source)
+          ? "floating_version_reference"
+          : "unpinned_source",
+        severity: "high",
+        confidence: "medium",
+        excerpt: `source is not pinned: ${source}`,
+      });
+    }
+
+    return findings;
+  }
+
+  private isLikelyFloatingReference(sourceUri: string): boolean {
+    return (
+      /(?:^|[/:@])latest(?:$|[/?#])/i.test(sourceUri) ||
+      /#(?:main|master|head)$/i.test(sourceUri) ||
+      /:(?:main|master|head)$/i.test(sourceUri)
+    );
+  }
+
+  private applyFailurePolicy(
+    findings: ScanFinding[],
+    policy: "deny" | "challenge" | "alert",
+    label: string,
+  ): Decision {
+    const summary = findings.map((f) => `${f.ruleId}(${f.severity})`).join(", ");
+    const maxSeverity = this.getMaxSeverity(findings);
+
+    switch (policy) {
+      case "deny":
+        return this.deny(`${label}: ${summary}`, maxSeverity);
+      case "challenge":
+        return {
+          action: "challenge" as Decision["action"],
+          module: this.name,
+          reason: `${label} require approval: ${summary}`,
+          severity: maxSeverity,
+          challenge: {
+            channel: "orchestrator",
+            prompt: `Suspicious content detected:\n${findings.map((f) => `- ${f.ruleId}: ${f.excerpt}`).join("\n")}\n\nAllow?`,
+            timeoutSec: 300,
+          },
+        };
+      case "alert":
+        return this.alert(`${label}: ${summary}`, maxSeverity);
+    }
   }
 }

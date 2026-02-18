@@ -16,14 +16,19 @@ import type { Adapter } from "./base.js";
 
 interface OpenClawHookInput {
 	hook_type: "PreToolUse" | "PostToolUse";
+	hook_event_name?: "PreToolUse" | "PostToolUse";
 	tool_name: string;
+	tool?: string;
 	tool_input: Record<string, unknown>;
+	tool_arguments?: Record<string, unknown>;
 	tool_output?: unknown;
+	tool_response?: unknown;
 	tool_result?: unknown;
 	is_error?: boolean;
 	error?: unknown;
 	session_id?: string;
 	session?: string;
+	sessionId?: string;
 	agent_name?: string;
 	agent?: string;
 	agentId?: string;
@@ -55,19 +60,18 @@ export class OpenClawAdapter implements Adapter {
 			input && typeof input === "object"
 				? (input as Partial<OpenClawHookInput>)
 				: {};
-		const hookType =
-			hook.hook_type === "PreToolUse" || hook.hook_type === "PostToolUse"
-				? hook.hook_type
-				: "PreToolUse";
+		const hookType = this.resolveHookType(hook);
 		const toolInput =
 			hook.tool_input && typeof hook.tool_input === "object"
 				? hook.tool_input
-				: {};
+				: hook.tool_arguments && typeof hook.tool_arguments === "object"
+					? hook.tool_arguments
+					: {};
 
 		const phase =
 			hookType === "PreToolUse" ? GuardPhase.PRE_TOOL : GuardPhase.POST_TOOL;
 		const sessionId =
-			this.pickString(hook, ["session_id", "session"]) ?? "unknown";
+			this.pickString(hook, ["session_id", "session", "sessionId"]) ?? "unknown";
 		const agentName = this.pickString(hook, [
 			"agent_name",
 			"agent",
@@ -82,7 +86,7 @@ export class OpenClawAdapter implements Adapter {
 			sessionId,
 			agentName,
 			toolCall: {
-				name: hook.tool_name ?? "unknown",
+				name: hook.tool_name ?? hook.tool ?? "unknown",
 				arguments: toolInput,
 				raw: hook,
 			},
@@ -141,6 +145,7 @@ export class OpenClawAdapter implements Adapter {
 
 		const source =
 			hook.tool_result ??
+			hook.tool_response ??
 			hook.tool_output ??
 			(hook as Record<string, unknown>).result ??
 			(hook as Record<string, unknown>).output;
@@ -171,6 +176,14 @@ export class OpenClawAdapter implements Adapter {
 				nestedIsError,
 			raw: source,
 		};
+	}
+
+	private resolveHookType(hook: Partial<OpenClawHookInput>): OpenClawHookInput["hook_type"] {
+		const candidate = hook.hook_type ?? hook.hook_event_name;
+		if (candidate === "PreToolUse" || candidate === "PostToolUse") {
+			return candidate;
+		}
+		return "PreToolUse";
 	}
 
 	private toText(value: unknown): string {

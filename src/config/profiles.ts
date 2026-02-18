@@ -13,6 +13,7 @@ const strict: DeepPartial<AgentGuardConfig> = {
     defaultAction: "deny",
   },
   modules: [
+    "kill_switch",
     "skill_scanner",
     "tool_policy",
     "fs_guard",
@@ -24,13 +25,41 @@ const strict: DeepPartial<AgentGuardConfig> = {
     "audit",
   ],
   moduleConfig: {
+    kill_switch: {
+      enabled: true,
+      envVar: "AGENTGUARD_KILL_SWITCH",
+      filePath: "./.agentguard/KILL_SWITCH",
+      denyPhases: ["pre_request", "pre_tool"],
+      reason: "emergency kill switch active: human safety override",
+    },
     skill_scanner: {
       scanOnStartup: true,
       scanOnReload: true,
       actionOnCritical: "deny",
+      requireSignature: true,
+      requireSbom: true,
+      requirePinnedSource: true,
+      onProvenanceFailure: "deny",
     },
     tool_policy: {
       default: "deny",
+    },
+    fs_guard: {
+      blockedBasenames: [
+        ".env",
+        ".env.local",
+        ".env.development",
+        ".env.production",
+        ".env.test",
+        ".envrc",
+      ],
+    },
+    command_guard: {
+      denyPatterns: [
+        "(^|\\s)sudo\\s",
+        "rm\\s+-rf\\s+/",
+        "(^|\\s)(cat|less|more|head|tail|grep|awk|sed)\\s+[^\\n]*\\.env(?:\\.|\\s|$)",
+      ],
     },
     exec_sandbox: {
       engine: "bwrap",
@@ -55,6 +84,7 @@ const balanced: DeepPartial<AgentGuardConfig> = {
     defaultAction: "deny",
   },
   modules: [
+    "kill_switch",
     "skill_scanner",
     "tool_policy",
     "fs_guard",
@@ -65,12 +95,23 @@ const balanced: DeepPartial<AgentGuardConfig> = {
     "audit",
   ],
   moduleConfig: {
+    kill_switch: {
+      enabled: true,
+      envVar: "AGENTGUARD_KILL_SWITCH",
+      filePath: "./.agentguard/KILL_SWITCH",
+      denyPhases: ["pre_request", "pre_tool"],
+      reason: "emergency kill switch active: human safety override",
+    },
     skill_scanner: {
       scanOnStartup: true,
       actionOnCritical: "challenge",
+      onProvenanceFailure: "challenge",
     },
     tool_policy: {
       default: "deny",
+    },
+    fs_guard: {
+      blockedBasenames: [".env", ".env.local", ".envrc"],
     },
     exec_sandbox: {
       engine: "bwrap",
@@ -95,6 +136,7 @@ const monitor: DeepPartial<AgentGuardConfig> = {
     defaultAction: "allow",
   },
   modules: [
+    "kill_switch",
     "skill_scanner",
     "tool_policy",
     "fs_guard",
@@ -104,8 +146,17 @@ const monitor: DeepPartial<AgentGuardConfig> = {
     "audit",
   ],
   moduleConfig: {
+    kill_switch: {
+      enabled: true,
+      envVar: "AGENTGUARD_KILL_SWITCH",
+      filePath: "./.agentguard/KILL_SWITCH",
+      denyPhases: ["pre_request", "pre_tool"],
+      reason: "emergency kill switch active: human safety override",
+      mode: "observe",
+    },
     skill_scanner: {
       actionOnCritical: "alert",
+      onProvenanceFailure: "alert",
       mode: "observe",
     },
     tool_policy: {

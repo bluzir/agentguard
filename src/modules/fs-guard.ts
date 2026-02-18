@@ -6,6 +6,7 @@ import { BaseModule } from "./base.js";
 interface FsGuardConfig {
 	allowedPaths: string[];
 	blockedPaths: string[];
+	blockedBasenames?: string[];
 }
 
 const FILE_TOOLS = new Set([
@@ -32,6 +33,7 @@ export class FsGuardModule extends BaseModule {
 
 	private allowedPaths: string[] = [];
 	private blockedPaths: string[] = [];
+	private blockedBasenames: Set<string> = new Set();
 
 	override configure(config: Record<string, unknown>): void {
 		super.configure(config);
@@ -41,6 +43,9 @@ export class FsGuardModule extends BaseModule {
 		);
 		this.blockedPaths = (c.blockedPaths ?? []).map((p) =>
 			this.canonicalizePolicyPath(p),
+		);
+		this.blockedBasenames = new Set(
+			(c.blockedBasenames ?? []).map((name) => name.toLowerCase()),
 		);
 	}
 
@@ -65,6 +70,14 @@ export class FsGuardModule extends BaseModule {
 					"critical",
 				);
 			}
+		}
+
+		const baseName = path.basename(canonicalPath).toLowerCase();
+		if (this.blockedBasenames.has(baseName)) {
+			return this.deny(
+				`path "${canonicalPath}" is blocked by basename policy`,
+				"critical",
+			);
 		}
 
 		// Must be within at least one allowed prefix

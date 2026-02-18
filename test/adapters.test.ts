@@ -47,6 +47,21 @@ describe("Adapters malformed payload handling", () => {
 		expect(event.toolResult?.isError).toBe(false);
 	});
 
+	it("openclaw adapter supports claude-style hook_event_name payload", () => {
+		const adapter = new OpenClawAdapter();
+		const event = adapter.toGuardEvent({
+			hook_event_name: "PostToolUse",
+			tool_name: "Bash",
+			tool_input: { command: "echo hi" },
+			tool_response: "hi",
+			sessionId: "session-99",
+		});
+
+		expect(event.phase).toBe(GuardPhase.POST_TOOL);
+		expect(event.sessionId).toBe("session-99");
+		expect(event.toolResult?.text).toBe("hi");
+	});
+
 	it("openclaw adapter maps multi-agent routing hints", () => {
 		const adapter = new OpenClawAdapter();
 		const event = adapter.toGuardEvent({

@@ -18,6 +18,8 @@ export interface WiringResult {
 	files: string[];
 }
 
+type JsonRecord = Record<string, unknown>;
+
 function parseArgs(): InstallArgs {
 	const args = process.argv.slice(3);
 
@@ -83,6 +85,75 @@ function writeFile(
 	}
 }
 
+function asRecord(value: unknown): JsonRecord {
+	if (value && typeof value === "object" && !Array.isArray(value)) {
+		return value as JsonRecord;
+	}
+	return {};
+}
+
+function hasHookCommand(entry: unknown, commandPath: string): boolean {
+	if (!entry || typeof entry !== "object") return false;
+	const item = entry as JsonRecord;
+	if (item.type === "command" && item.command === commandPath) {
+		return true;
+	}
+	const hooks = item.hooks;
+	if (!Array.isArray(hooks)) return false;
+	return hooks.some((hook) => {
+		if (typeof hook === "string") {
+			return hook === commandPath;
+		}
+		if (!hook || typeof hook !== "object") return false;
+		const hookItem = hook as JsonRecord;
+		return hookItem.type === "command" && hookItem.command === commandPath;
+	});
+}
+
+function mergeClaudeToolHooks(
+	settings: JsonRecord,
+	commandPath: string,
+): JsonRecord {
+	const hooks = asRecord(settings.hooks);
+	const resultHooks: JsonRecord = { ...hooks };
+	for (const event of ["PreToolUse", "PostToolUse"] as const) {
+		const entries = Array.isArray(hooks[event]) ? [...hooks[event]] : [];
+		const alreadyPresent = entries.some((entry) =>
+			hasHookCommand(entry, commandPath),
+		);
+		if (!alreadyPresent) {
+			entries.push({
+				matcher: "*",
+				hooks: [
+					{
+						type: "command",
+						command: commandPath,
+					},
+				],
+			});
+		}
+		resultHooks[event] = entries;
+	}
+	return {
+		...settings,
+		hooks: resultHooks,
+	};
+}
+
+function buildHookCommandScript(
+	adapter: "openclaw",
+	configRef: string,
+): string {
+	return [
+		"#!/usr/bin/env sh",
+		"set -eu",
+		'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+		`CONFIG_PATH="\${AGENTGUARD_CONFIG:-$SCRIPT_DIR/${configRef}}"`,
+		`exec npx agentguard hook --adapter ${adapter} --config "$CONFIG_PATH"`,
+		"",
+	].join("\n");
+}
+
 export function generateWiringArtifacts(options: {
 	framework: FrameworkName;
 	configPath: string;
@@ -91,6 +162,7 @@ export function generateWiringArtifacts(options: {
 }): WiringResult {
 	const framework = options.framework;
 	const outputDir = path.resolve(options.outputDir);
+	const projectRoot = path.dirname(outputDir);
 	const dryRun = options.dryRun ?? false;
 	const files: string[] = [];
 
@@ -100,6 +172,16 @@ export function generateWiringArtifacts(options: {
 
 	const addFile = (filename: string, content: string, executable = false) => {
 		const target = path.join(outputDir, filename);
+		writeFile(target, content, dryRun, executable);
+		files.push(target);
+	};
+
+	const addProjectFile = (
+		relativePath: string,
+		content: string,
+		executable = false,
+	) => {
+		const target = path.join(projectRoot, relativePath);
 		writeFile(target, content, dryRun, executable);
 		files.push(target);
 	};
@@ -122,19 +204,27 @@ export function generateWiringArtifacts(options: {
 		case "openclaw":
 			addFile(
 				"openclaw-hook.command.sh",
-				[
-					"#!/usr/bin/env sh",
-					`exec npx agentguard hook --adapter openclaw --config "${configRef}"`,
-					"",
-				].join("\n"),
+				buildHookCommandScript("openclaw", configRef),
 				true,
 			);
 			addFile(
 				"openclaw-hooks.json",
 				[
 					"{",
-					'  "PreToolUse": { "command": "sh ./.agentguard/openclaw-hook.command.sh" },',
-					'  "PostToolUse": { "command": "sh ./.agentguard/openclaw-hook.command.sh" }',
+					'  "hooks": {',
+					'    "PreToolUse": [',
+					'      {',
+					'        "matcher": "*",',
+					'        "hooks": [".agentguard/openclaw-hook.command.sh"]',
+					"      }",
+					"    ],",
+					'    "PostToolUse": [',
+					'      {',
+					'        "matcher": "*",',
+					'        "hooks": [".agentguard/openclaw-hook.command.sh"]',
+					"      }",
+					"    ]",
+					"  }",
 					"}",
 					"",
 				].join("\n"),
@@ -172,6 +262,37 @@ export function generateWiringArtifacts(options: {
 					"",
 				].join("\n"),
 			);
+			addFile(
+				"claude-tool-hook.command.sh",
+				buildHookCommandScript("openclaw", configRef),
+				true,
+			);
+			{
+				const commandPath = ".agentguard/claude-tool-hook.command.sh";
+				const settingsPath = path.join(
+					projectRoot,
+					".claude",
+					"settings.local.json",
+				);
+				let settings: JsonRecord = {};
+				if (fs.existsSync(settingsPath)) {
+					try {
+						const raw = fs.readFileSync(settingsPath, "utf-8");
+						settings = asRecord(JSON.parse(raw));
+					} catch (error) {
+						const message =
+							error instanceof Error ? error.message : String(error);
+						throw new Error(
+							`failed to parse ${settingsPath}: ${message}`,
+						);
+					}
+				}
+				const merged = mergeClaudeToolHooks(settings, commandPath);
+				addProjectFile(
+					path.join(".claude", "settings.local.json"),
+					`${JSON.stringify(merged, null, 2)}\n`,
+				);
+			}
 			break;
 
 		case "generic":
