@@ -12,9 +12,9 @@ const commands: Record<string, () => Promise<void>> = {
 	serve: () => import("./serve.js").then((m) => m.run()),
 };
 
-const USAGE = `agentguard - Security layer for AI agent orchestrators
+const USAGE = `agentradius - Security layer for AI agent orchestrators
 
-Usage: agentguard <command> [options]
+Usage: agentradius <command> [options]
 
 Commands:
   init       Scaffold config and framework wiring
@@ -42,7 +42,7 @@ async function main(): Promise<void> {
 	}
 
 	if (command === "--version" || command === "-v") {
-		console.log("0.2.0");
+		console.log("0.4.0");
 		process.exit(0);
 	}
 

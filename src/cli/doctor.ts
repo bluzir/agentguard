@@ -59,7 +59,7 @@ export async function run(): Promise<void> {
 
   // 2.1 Critical profile posture checks
   const skillScanner = config.moduleConfig.skill_scanner as Record<string, unknown> | undefined;
-  if (config.global.profile === "strict") {
+  if (config.global.profile === "local") {
     const requireSignature = skillScanner?.requireSignature === true;
     const requireSbom = skillScanner?.requireSbom === true;
     const requirePinnedSource = skillScanner?.requirePinnedSource === true;
@@ -107,13 +107,30 @@ export async function run(): Promise<void> {
     }
 
     const telegram = config.approval.channels.telegram;
-    if (!telegram?.enabled) {
+    const http = config.approval.channels.http;
+    const telegramEnabled = telegram?.enabled === true;
+    const httpEnabled = http?.enabled === true;
+
+    if (!telegramEnabled && !httpEnabled) {
       checks.push({
         name: "Approval channel",
         status: "fail",
         message: "no enabled approval channels (telegram/http)",
       });
     } else {
+      checks.push({
+        name: "Approval channel",
+        status: "ok",
+        message: [
+          telegramEnabled ? "telegram" : "",
+          httpEnabled ? "http" : "",
+        ]
+          .filter(Boolean)
+          .join(", "),
+      });
+    }
+
+    if (telegramEnabled && telegram) {
       if (nonEmpty(telegram.botToken) && telegram.botToken !== "SET_ME") {
         checks.push({
           name: "Telegram bot token",
@@ -138,7 +155,7 @@ export async function run(): Promise<void> {
         checks.push({
           name: "Telegram chat binding",
           status: "fail",
-          message: 'no allowedChatIds. Run: agentguard link telegram --chat-id <id> --user-id <id>',
+          message: 'no allowedChatIds. Run: agentradius link telegram --chat-id <id> --user-id <id>',
         });
       }
 
@@ -152,7 +169,7 @@ export async function run(): Promise<void> {
         checks.push({
           name: "Telegram approvers",
           status: "fail",
-          message: 'no approverUserIds. Run: agentguard link telegram --chat-id <id> --user-id <id>',
+          message: 'no approverUserIds. Run: agentradius link telegram --chat-id <id> --user-id <id>',
         });
       }
 
@@ -175,6 +192,36 @@ export async function run(): Promise<void> {
           name: "Telegram transport",
           status: "ok",
           message: "polling",
+        });
+      }
+    }
+
+    if (httpEnabled && http) {
+      if (nonEmpty(http.url)) {
+        checks.push({
+          name: "HTTP approval endpoint",
+          status: "ok",
+          message: http.url,
+        });
+      } else {
+        checks.push({
+          name: "HTTP approval endpoint",
+          status: "fail",
+          message: "missing. Set approval.channels.http.url",
+        });
+      }
+
+      if (typeof http.timeoutMs === "number" && http.timeoutMs > 0) {
+        checks.push({
+          name: "HTTP approval timeout",
+          status: "ok",
+          message: `${http.timeoutMs}ms`,
+        });
+      } else {
+        checks.push({
+          name: "HTTP approval timeout",
+          status: "fail",
+          message: "approval.channels.http.timeoutMs must be > 0",
         });
       }
     }
@@ -234,7 +281,7 @@ export async function run(): Promise<void> {
   checks.push({
     name: "Dotenv read policy",
     status:
-      blocksDotEnv || config.global.profile !== "strict" ? "ok" : "fail",
+      blocksDotEnv || config.global.profile !== "local" ? "ok" : "fail",
     message: blocksDotEnv
       ? '.env basename is blocked by fs_guard'
       : 'strict profile should block ".env" via fs_guard.blockedBasenames',
@@ -291,7 +338,7 @@ export async function run(): Promise<void> {
 }
 
 function printChecks(checks: Check[]): void {
-  console.log("\nagentguard doctor\n");
+  console.log("\nagentradius doctor\n");
   for (const c of checks) {
     const icon = c.status === "ok" ? "OK  " : c.status === "warn" ? "WARN" : "FAIL";
     console.log(`  [${icon}] ${c.name}: ${c.message}`);

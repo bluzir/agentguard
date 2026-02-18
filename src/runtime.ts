@@ -1,4 +1,9 @@
 import { createAdapter, type Adapter } from "./adapters/index.js";
+import {
+  configureApprovalLeaseStore,
+  grantApprovalLease,
+} from "./approval/lease-store.js";
+import { HttpApprovalResolver } from "./approval/http-resolver.js";
 import { TelegramApprovalResolver } from "./approval/telegram-resolver.js";
 import { loadConfig } from "./config/index.js";
 import { createModules } from "./modules/index.js";
@@ -6,7 +11,7 @@ import { AuditModule } from "./modules/audit.js";
 import { runPipeline } from "./pipeline.js";
 import { DecisionAction } from "./types.js";
 import type {
-  AgentGuardConfig,
+  RadiusConfig,
   Decision,
   Framework,
   GuardEvent,
@@ -20,20 +25,28 @@ export interface RuntimeOptions {
 }
 
 /**
- * AgentGuard runtime — the main entry point for evaluating events.
+ * Radius runtime — the main entry point for evaluating events.
  *
  * Topology (§5.1):
  *   Orchestrator Event -> Adapter -> Canonical Event -> Pipeline -> Decision -> Adapter Response
  */
-export class AgentGuardRuntime {
-  private config: AgentGuardConfig;
+export class RadiusRuntime {
+  private config: RadiusConfig;
   private modules: SecurityModule[];
   private adapter: Adapter;
   private auditModule: AuditModule | undefined;
   private telegramResolver: TelegramApprovalResolver | undefined;
+  private httpResolver: HttpApprovalResolver | undefined;
 
   constructor(options: RuntimeOptions = {}) {
     this.config = loadConfig(options.configPath);
+    configureApprovalLeaseStore({
+      engine: this.config.approval.store.engine,
+      path: this.config.approval.store.path,
+      required:
+        this.config.approval.store.required ??
+        this.config.approval.store.engine === "sqlite",
+    });
 
     this.modules = createModules(
       this.config.modules,
@@ -51,6 +64,10 @@ export class AgentGuardRuntime {
     const telegram = this.config.approval.channels.telegram;
     if (telegram?.enabled) {
       this.telegramResolver = new TelegramApprovalResolver(telegram);
+    }
+    const http = this.config.approval.channels.http;
+    if (http?.enabled) {
+      this.httpResolver = new HttpApprovalResolver(http);
     }
   }
 
@@ -80,7 +97,7 @@ export class AgentGuardRuntime {
     return result;
   }
 
-  getConfig(): AgentGuardConfig {
+  getConfig(): RadiusConfig {
     return this.config;
   }
 
@@ -98,10 +115,6 @@ export class AgentGuardRuntime {
     const challenge = this.extractChallenge(result);
     if (!challenge) return result;
 
-    if (challenge.channel !== "telegram") {
-      return result;
-    }
-
     if (this.config.approval.mode !== "sync_wait") {
       return this.withFinalDecision(
         result,
@@ -111,33 +124,95 @@ export class AgentGuardRuntime {
       );
     }
 
-    if (!this.telegramResolver) {
-      return this.handleConnectorError(
+    if (challenge.channel === "telegram") {
+      if (!this.telegramResolver) {
+        return this.handleConnectorError(
+          result,
+          "telegram resolver is not configured",
+        );
+      }
+
+      const resolution = await this.telegramResolver.resolve({
+        approvalId: this.createApprovalId(),
+        prompt: challenge.prompt,
+        timeoutSec: challenge.timeoutSec,
+        event,
+      });
+      return this.applyConnectorResolution(
+        "telegram",
+        event,
         result,
-        "telegram resolver is not configured",
+        resolution,
       );
     }
 
-    const resolution = await this.telegramResolver.resolve({
-      approvalId: this.createApprovalId(),
-      prompt: challenge.prompt,
-      timeoutSec: challenge.timeoutSec,
-      event,
-    });
+    if (challenge.channel === "http") {
+      if (!this.httpResolver) {
+        return this.handleConnectorError(
+          result,
+          "http resolver is not configured",
+        );
+      }
 
+      const resolution = await this.httpResolver.resolve({
+        approvalId: this.createApprovalId(),
+        prompt: challenge.prompt,
+        timeoutSec: challenge.timeoutSec,
+        event,
+      });
+      return this.applyConnectorResolution("http", event, result, resolution);
+    }
+
+    return result;
+  }
+
+  private applyConnectorResolution(
+    connector: "telegram" | "http",
+    event: GuardEvent,
+    result: PipelineResult,
+    resolution: {
+      status:
+        | "approved"
+        | "approved_temporary"
+        | "denied"
+        | "timeout"
+        | "error";
+      reason: string;
+      ttlSec?: number;
+    },
+  ): PipelineResult {
     switch (resolution.status) {
       case "approved":
         return this.withFinalDecision(
           result,
           DecisionAction.ALLOW,
-          `telegram approval granted: ${resolution.reason}`,
+          `${connector} approval granted: ${resolution.reason}`,
           "info",
         );
+      case "approved_temporary": {
+        const configuredTtl = this.config.approval.temporaryGrantTtlSec ?? 1800;
+        const maxTtl = this.config.approval.maxTemporaryGrantTtlSec ?? 1800;
+        const requestedTtl = resolution.ttlSec ?? configuredTtl;
+        const effectiveTtl = Math.max(1, Math.min(requestedTtl, maxTtl));
+        const lease = grantApprovalLease({
+          sessionId: event.sessionId,
+          agentName: event.agentName,
+          tool: "*",
+          ttlSec: effectiveTtl,
+          reason: `${connector} temporary approval`,
+        });
+        return this.withFinalDecision(
+          result,
+          DecisionAction.ALLOW,
+          `${connector} temporary approval granted (${effectiveTtl}s, lease ${lease.id})`,
+          "info",
+        );
+      }
       case "denied":
         return this.withFinalDecision(
           result,
           DecisionAction.DENY,
-          `telegram approval denied: ${resolution.reason}`,
+          `${connector} approval denied: ${resolution.reason}`,
           "high",
         );
       case "timeout":
@@ -145,11 +220,14 @@ export class AgentGuardRuntime {
           return this.withFinalDecision(
             result,
             DecisionAction.DENY,
-            `telegram approval timeout: ${resolution.reason}`,
+            `${connector} approval timeout: ${resolution.reason}`,
             "high",
           );
         }
-        return this.withAlert(result, resolution.reason);
+        return this.withAlert(
+          result,
+          `${connector} approval timeout: ${resolution.reason}`,
+        );
       case "error":
         return this.handleConnectorError(result, resolution.reason);
     }
@@ -245,3 +323,8 @@ export class AgentGuardRuntime {
     return "generic";
   }
 }
+
+/** @deprecated Use RadiusRuntime */
+export const AgentGuardRuntime = RadiusRuntime;
+/** @deprecated Use RadiusRuntime */
+export type AgentGuardRuntime = RadiusRuntime;

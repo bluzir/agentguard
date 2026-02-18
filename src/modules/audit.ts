@@ -157,7 +157,7 @@ export class AuditModule extends BaseModule {
       // Never block — stderr + in-memory fallback
       const message = err instanceof Error ? err.message : "unknown";
       process.stderr.write(
-        `[agentguard:audit] sink write failed: ${message}\n`,
+        `[radius:audit] sink write failed: ${message}\n`,
       );
       this.fallbackBuffer.push(line);
     }
@@ -214,7 +214,7 @@ export class AuditModule extends BaseModule {
       .catch((err) => {
         const message = err instanceof Error ? err.message : "unknown";
         process.stderr.write(
-          `[agentguard:audit] ${sink} sink write failed: ${message}\n`,
+          `[radius:audit] ${sink} sink write failed: ${message}\n`,
         );
         this.fallbackBuffer.push(fallbackLine);
       })
@@ -230,12 +230,12 @@ export class AuditModule extends BaseModule {
         {
           resource: {
             attributes: [
-              { key: "service.name", value: { stringValue: "agentguard" } },
+              { key: "service.name", value: { stringValue: "radius" } },
             ],
           },
           scopeLogs: [
             {
-              scope: { name: "agentguard.audit" },
+              scope: { name: "radius.audit" },
               logRecords: [
                 {
                   timeUnixNano: nowNano,

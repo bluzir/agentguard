@@ -1,12 +1,12 @@
 {
-  "name": "agentgrd",
-  "version": "0.3.0",
+  "name": "agentradius",
+  "version": "0.4.0",
   "description": "Framework-agnostic security layer for AI agent orchestrators",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "agentguard": "./dist/cli/index.js"
+    "agentradius": "./dist/cli/index.js"
   },
   "exports": {
     ".": {
@@ -43,18 +43,19 @@
     "orchestrator",
     "llm",
     "tool-use",
-    "sandbox"
+    "sandbox",
+    "radius"
   ],
   "author": "bluzir",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bluzir/agentguard.git"
+    "url": "git+https://github.com/bluzir/radius.git"
   },
   "bugs": {
-    "url": "https://github.com/bluzir/agentguard/issues"
+    "url": "https://github.com/bluzir/radius/issues"
   },
-  "homepage": "https://github.com/bluzir/agentguard#readme",
+  "homepage": "https://github.com/bluzir/radius#readme",
   "engines": {
     "node": ">=20"
   },

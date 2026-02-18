@@ -1,5 +1,5 @@
 global:
-  profile: strict
+  profile: local
   workspace: ${CWD}
   defaultAction: deny
   requireSignedPolicy: false
@@ -7,7 +7,7 @@ global:
 
 audit:
   sink: file
-  path: ./agentguard-audit.jsonl
+  path: ./radius-audit.jsonl
   includeArguments: true
   includeResults: false
 
@@ -19,7 +19,8 @@ approval:
   onConnectorError: deny
   store:
     engine: sqlite
-    path: ./.agentguard/approvals.db
+    path: ./.radius/state.db
+    required: true
   channels:
     telegram:
       enabled: false
@@ -48,8 +49,8 @@ modules:
 moduleConfig:
   kill_switch:
     enabled: true
-    envVar: AGENTGUARD_KILL_SWITCH
-    filePath: ./.agentguard/KILL_SWITCH
+    envVar: RADIUS_KILL_SWITCH
+    filePath: ./.radius/KILL_SWITCH
     denyPhases:
       - pre_request
       - pre_tool
@@ -131,3 +132,7 @@ moduleConfig:
   rate_budget:
     windowSec: 60
     maxCallsPerWindow: 30
+    store:
+      engine: sqlite
+      path: ./.radius/state.db
+      required: true

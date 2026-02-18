@@ -8,8 +8,14 @@ export interface TelegramResolutionRequest {
 }
 
 export interface TelegramResolutionResult {
-  status: "approved" | "denied" | "timeout" | "error";
+  status:
+    | "approved"
+    | "approved_temporary"
+    | "denied"
+    | "timeout"
+    | "error";
   reason: string;
+  ttlSec?: number;
 }
 
 export interface TelegramResolverDependencies {
@@ -75,6 +81,13 @@ export class TelegramApprovalResolver {
       if (decision === "approve") {
         return { status: "approved", reason: "approved from Telegram callback" };
       }
+      if (decision === "grant30m") {
+        return {
+          status: "approved_temporary",
+          reason: "approved temporary for 30m from Telegram callback",
+          ttlSec: 30 * 60,
+        };
+      }
       if (decision === "deny") {
         return { status: "denied", reason: "denied from Telegram callback" };
       }
@@ -102,6 +115,10 @@ export class TelegramApprovalResolver {
                 callback_data: `ag:approve:${request.approvalId}`,
               },
               {
+                text: "Allow 30m",
+                callback_data: `ag:grant30m:${request.approvalId}`,
+              },
+              {
                 text: "Deny",
                 callback_data: `ag:deny:${request.approvalId}`,
               },
@@ -116,7 +133,7 @@ export class TelegramApprovalResolver {
   private async pollDecision(
     token: string,
     request: TelegramResolutionRequest,
-  ): Promise<"approve" | "deny" | undefined> {
+  ): Promise<"approve" | "grant30m" | "deny" | undefined> {
     const timeoutMs = Math.max(0, request.timeoutSec) * 1000;
     const deadline = this.now() + timeoutMs;
 
@@ -159,7 +176,7 @@ export class TelegramApprovalResolver {
         : "unknown";
 
     const lines = [
-      "[agentguard] approval required",
+      "[radius] approval required",
       `Tool: ${tool}`,
       `Session: ${request.event.sessionId}`,
       `Agent: ${agent}`,
@@ -183,11 +200,15 @@ export class TelegramApprovalResolver {
   private parseDecisionData(
     data: string,
     approvalId: string,
-  ): "approve" | "deny" | undefined {
-    const match = /^ag:(approve|deny):([A-Za-z0-9_-]+)$/.exec(data.trim());
+  ): "approve" | "grant30m" | "deny" | undefined {
+    const match = /^ag:(approve|deny|grant30m):([A-Za-z0-9_-]+)$/.exec(
+      data.trim(),
+    );
     if (!match) return undefined;
     if (match[2] !== approvalId) return undefined;
-    return match[1] === "approve" ? "approve" : "deny";
+    if (match[1] === "approve") return "approve";
+    if (match[1] === "grant30m") return "grant30m";
+    return "deny";
   }
 
   private isAuthorized(query: TelegramCallbackQuery): boolean {

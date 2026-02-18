@@ -15,11 +15,13 @@ export {
   type PipelineResult,
   type SecurityModule,
   type ModuleMode,
+  type RadiusConfig,
   type AgentGuardConfig,
   type ApprovalConfig,
   type ApprovalStoreConfig,
   type ApprovalChannelsConfig,
   type TelegramApprovalChannelConfig,
+  type HttpApprovalChannelConfig,
   type ProfileName,
 } from "./types.js";
 
@@ -37,12 +39,18 @@ export {
   type TelegramResolverDependencies,
   TelegramApprovalResolver,
 } from "./approval/telegram-resolver.js";
+export {
+  type HttpResolutionRequest,
+  type HttpResolutionResult,
+  type HttpResolverDependencies,
+  HttpApprovalResolver,
+} from "./approval/http-resolver.js";
 
 // Pipeline
 export { runPipeline, type PipelineOptions } from "./pipeline.js";
 
 // Runtime
-export { AgentGuardRuntime, type RuntimeOptions } from "./runtime.js";
+export { RadiusRuntime, AgentGuardRuntime, type RuntimeOptions } from "./runtime.js";
 
 // Config
 export { loadConfig, getProfile, PROFILES } from "./config/index.js";

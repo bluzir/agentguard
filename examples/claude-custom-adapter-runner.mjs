@@ -5,7 +5,7 @@ import {
 	GuardPhase,
 	loadConfig,
 	runPipeline,
-} from "agentgrd";
+} from "agentradius";
 
 /**
  * Minimal custom adapter for Claude Code-based orchestrators that emit hook payloads:
@@ -80,7 +80,7 @@ class ClaudeOrchestratorAdapter {
 		if (result.finalAction === "deny" || result.finalAction === "challenge") {
 			return {
 				decision: "block",
-				reason: result.reason ?? "blocked by agentguard",
+				reason: result.reason ?? "blocked by radius",
 			};
 		}
 
@@ -122,7 +122,7 @@ async function main() {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			process.stdout.write(
-				`${JSON.stringify({ decision: "block", reason: `agentguard error: ${message}` })}\n`,
+				`${JSON.stringify({ decision: "block", reason: `radius error: ${message}` })}\n`,
 			);
 		}
 	}
@@ -130,7 +130,7 @@ async function main() {
 
 main().catch((error) => {
 	const message = error instanceof Error ? error.message : String(error);
-	process.stderr.write(`[agentguard:custom-adapter] fatal: ${message}\n`);
+	process.stderr.write(`[radius:custom-adapter] fatal: ${message}\n`);
 	process.exit(1);
 });
 

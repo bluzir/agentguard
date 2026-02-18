@@ -10,6 +10,7 @@ import {
   resolveApprovalChannel,
   type ApprovalChannelSelector,
 } from "../approval/channel-bridge.js";
+import { findActiveApprovalLease } from "../approval/lease-store.js";
 import { BaseModule } from "./base.js";
 
 interface ApprovalRule {
@@ -54,6 +55,15 @@ export class ApprovalGateModule extends BaseModule {
   async evaluate(event: GuardEvent): Promise<Decision> {
     const toolName = event.toolCall?.name;
     if (!toolName) return this.allow("no tool call");
+
+    const activeLease = findActiveApprovalLease(event, toolName);
+    if (activeLease) {
+      return this.allow(
+        `approval bypass lease active (${activeLease.id}) until ${new Date(
+          activeLease.expiresAtMs,
+        ).toISOString()}`,
+      );
+    }
 
     const rule = this.rules.find(
       (r) => r.tool === toolName || r.tool === "*",

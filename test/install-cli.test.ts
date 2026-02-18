@@ -15,36 +15,36 @@ function withArgv(argv: string[], fn: () => Promise<void>): Promise<void> {
 
 describe("install wiring", () => {
 	it("generates openclaw hooks with stable script path resolution", () => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentguard-install-openclaw-"));
-		const configPath = path.join(tmpDir, "agentguard.yaml");
-		fs.writeFileSync(configPath, "global:\n  profile: balanced\n");
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-install-openclaw-"));
+		const configPath = path.join(tmpDir, "radius.yaml");
+		fs.writeFileSync(configPath, "global:\n  profile: standard\n");
 
 		generateWiringArtifacts({
 			framework: "openclaw",
 			configPath,
-			outputDir: path.join(tmpDir, ".agentguard"),
+			outputDir: path.join(tmpDir, ".radius"),
 		});
 
-		const hookScriptPath = path.join(tmpDir, ".agentguard", "openclaw-hook.command.sh");
+		const hookScriptPath = path.join(tmpDir, ".radius", "openclaw-hook.command.sh");
 		const hookScript = fs.readFileSync(hookScriptPath, "utf-8");
 		expect(hookScript).toContain('SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"');
-		expect(hookScript).toContain('CONFIG_PATH="${AGENTGUARD_CONFIG:-$SCRIPT_DIR/../agentguard.yaml}"');
-		expect(hookScript).toContain('exec npx agentguard hook --adapter openclaw --config "$CONFIG_PATH"');
+		expect(hookScript).toContain('CONFIG_PATH="${RADIUS_CONFIG:-$SCRIPT_DIR/../radius.yaml}"');
+		expect(hookScript).toContain('exec npx agentradius hook --adapter openclaw --config "$CONFIG_PATH"');
 
-		const hooksJsonPath = path.join(tmpDir, ".agentguard", "openclaw-hooks.json");
+		const hooksJsonPath = path.join(tmpDir, ".radius", "openclaw-hooks.json");
 		const hooks = JSON.parse(fs.readFileSync(hooksJsonPath, "utf-8")) as Record<string, unknown>;
 		const root = hooks.hooks as Record<string, unknown>;
 		const preToolUse = root.PreToolUse as Array<Record<string, unknown>>;
 		expect(preToolUse[0]?.matcher).toBe("*");
-		expect(preToolUse[0]?.hooks).toEqual([".agentguard/openclaw-hook.command.sh"]);
+		expect(preToolUse[0]?.hooks).toEqual([".radius/openclaw-hook.command.sh"]);
 	});
 
 	it("patches .claude/settings.local.json for tool hooks without clobbering permissions", () => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentguard-install-claude-"));
-		const configPath = path.join(tmpDir, "agentguard.yaml");
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-install-claude-"));
+		const configPath = path.join(tmpDir, "radius.yaml");
 		const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
 		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-		fs.writeFileSync(configPath, "global:\n  profile: balanced\n");
+		fs.writeFileSync(configPath, "global:\n  profile: standard\n");
 		fs.writeFileSync(
 			settingsPath,
 			JSON.stringify(
@@ -61,12 +61,12 @@ describe("install wiring", () => {
 		generateWiringArtifacts({
 			framework: "claude-telegram",
 			configPath,
-			outputDir: path.join(tmpDir, ".agentguard"),
+			outputDir: path.join(tmpDir, ".radius"),
 		});
 		generateWiringArtifacts({
 			framework: "claude-telegram",
 			configPath,
-			outputDir: path.join(tmpDir, ".agentguard"),
+			outputDir: path.join(tmpDir, ".radius"),
 		});
 
 		const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
@@ -80,26 +80,26 @@ describe("install wiring", () => {
 		expect(pre[0]?.matcher).toBe("*");
 		expect(post[0]?.matcher).toBe("*");
 		expect(pre[0]?.hooks).toEqual([
-			{ type: "command", command: ".agentguard/claude-tool-hook.command.sh" },
+			{ type: "command", command: ".radius/claude-tool-hook.command.sh" },
 		]);
 		expect(post[0]?.hooks).toEqual([
-			{ type: "command", command: ".agentguard/claude-tool-hook.command.sh" },
+			{ type: "command", command: ".radius/claude-tool-hook.command.sh" },
 		]);
 	});
 
 	it("init creates parent output directories before writing config", async () => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentguard-init-output-"));
-		const configPath = path.join(tmpDir, "nested", "path", "agentguard.yaml");
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-init-output-"));
+		const configPath = path.join(tmpDir, "nested", "path", "radius.yaml");
 
 		await withArgv(
 			[
 				"node",
-				"agentguard",
+				"agentradius",
 				"init",
 				"--framework",
 				"openclaw",
 				"--profile",
-				"balanced",
+				"standard",
 				"--output",
 				configPath,
 			],
@@ -110,7 +110,7 @@ describe("install wiring", () => {
 
 		expect(fs.existsSync(configPath)).toBe(true);
 		expect(
-			fs.existsSync(path.join(path.dirname(configPath), ".agentguard", "openclaw-hook.command.sh")),
+			fs.existsSync(path.join(path.dirname(configPath), ".radius", "openclaw-hook.command.sh")),
 		).toBe(true);
 	});
 });

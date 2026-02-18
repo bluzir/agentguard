@@ -58,15 +58,15 @@ function resolveConfigPath(configPath?: string): string {
   }
 
   const candidates = [
-    path.join(process.cwd(), "agentguard.yaml"),
-    path.join(process.cwd(), "agentguard.yml"),
-    path.join(process.cwd(), ".agentguard.yaml"),
+    path.join(process.cwd(), "radius.yaml"),
+    path.join(process.cwd(), "radius.yml"),
+    path.join(process.cwd(), ".radius.yaml"),
   ];
 
   const found = candidates.find((candidate) => fs.existsSync(candidate));
   if (!found) {
     throw new Error(
-      "agentguard config not found. Run: npx agentguard init --framework <name>",
+      "radius config not found. Run: npx agentradius init --framework <name>",
     );
   }
   return found;
@@ -107,7 +107,7 @@ export async function run(): Promise<void> {
 
   if (args.chatIds.length === 0 || args.userIds.length === 0) {
     throw new Error(
-      'telegram link requires both --chat-id and --user-id. Example: agentguard link telegram --chat-id 123 --user-id 456',
+      'telegram link requires both --chat-id and --user-id. Example: agentradius link telegram --chat-id 123 --user-id 456',
     );
   }
 
@@ -126,7 +126,7 @@ export async function run(): Promise<void> {
 
   const store = asRecord(approval.store);
   store.engine = store.engine ?? "sqlite";
-  store.path = store.path ?? "./.agentguard/approvals.db";
+  store.path = store.path ?? "./.radius/approvals.db";
   approval.store = store;
 
   const channels = asRecord(approval.channels);

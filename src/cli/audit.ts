@@ -347,7 +347,7 @@ function printHumanSummary(
 	summary: AuditSummary,
 	recentEntries: AuditEntry[],
 ): void {
-	console.log("\nagentguard audit\n");
+	console.log("\nagentradius audit\n");
 	console.log(`File: ${filePath}`);
 	console.log(`Total entries: ${summary.totalEntries}`);
 	console.log(`Invalid lines: ${summary.invalidLines}`);

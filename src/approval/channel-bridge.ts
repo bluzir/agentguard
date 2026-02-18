@@ -16,7 +16,8 @@ export interface ResolvedApprovalChannel {
 
 /**
  * Contract for future runtime channel connectors (OpenClaw-native, Telegram, Discord, HTTP).
- * Current runtime emits challenge decisions; bridge wiring is a follow-up milestone.
+ * Runtime currently resolves Telegram and HTTP challenges directly.
+ * This bridge contract is reserved for pluggable channel connectors.
  */
 export interface ChannelBridge {
   channel: ApprovalChannel;

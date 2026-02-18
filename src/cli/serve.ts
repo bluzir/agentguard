@@ -1,5 +1,5 @@
 import http from "node:http";
-import { AgentGuardRuntime } from "../runtime.js";
+import { RadiusRuntime } from "../runtime.js";
 
 /**
  * HTTP/MCP runtime server.
@@ -30,7 +30,7 @@ export async function run(): Promise<void> {
     }
   }
 
-  const runtime = new AgentGuardRuntime({
+  const runtime = new RadiusRuntime({
     configPath,
     framework: framework as "openclaw" | "nanobot" | "claude-telegram" | "generic" | undefined,
   });
@@ -49,7 +49,7 @@ export async function run(): Promise<void> {
 
     if (req.method === "GET" && req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", version: "0.2.0" }));
+      res.end(JSON.stringify({ status: "ok", version: "0.4.0" }));
       return;
     }
 
@@ -74,7 +74,7 @@ export async function run(): Promise<void> {
   });
 
   server.listen(port, () => {
-    console.log(`agentguard serve listening on http://localhost:${port}`);
+    console.log(`agentradius serve listening on http://localhost:${port}`);
     console.log(`  POST /check  — evaluate guard event`);
     console.log(`  GET  /health — health check`);
   });

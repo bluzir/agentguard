@@ -25,7 +25,7 @@ function parseArgs(): InstallArgs {
 
 	let configPath: string | undefined;
 	let framework: string | undefined;
-	let outputDir = ".agentguard";
+	let outputDir = ".radius";
 	let dryRun = false;
 
 	for (let i = 0; i < args.length; i++) {
@@ -148,8 +148,8 @@ function buildHookCommandScript(
 		"#!/usr/bin/env sh",
 		"set -eu",
 		'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-		`CONFIG_PATH="\${AGENTGUARD_CONFIG:-$SCRIPT_DIR/${configRef}}"`,
-		`exec npx agentguard hook --adapter ${adapter} --config "$CONFIG_PATH"`,
+		`CONFIG_PATH="\${RADIUS_CONFIG:-$SCRIPT_DIR/${configRef}}"`,
+		`exec npx agentradius hook --adapter ${adapter} --config "$CONFIG_PATH"`,
 		"",
 	].join("\n");
 }
@@ -189,13 +189,13 @@ export function generateWiringArtifacts(options: {
 	addFile(
 		"README.md",
 		[
-			"# agentguard wiring",
+			"# radius wiring",
 			"",
 			`Framework: ${framework}`,
 			"Generated snippets and scripts for adapter wiring.",
 			"",
 			"Regenerate:",
-			`  npx agentguard install --framework ${framework}`,
+			`  npx agentradius install --framework ${framework}`,
 			"",
 		].join("\n"),
 	);
@@ -215,13 +215,13 @@ export function generateWiringArtifacts(options: {
 					'    "PreToolUse": [',
 					'      {',
 					'        "matcher": "*",',
-					'        "hooks": [".agentguard/openclaw-hook.command.sh"]',
+					'        "hooks": [".radius/openclaw-hook.command.sh"]',
 					"      }",
 					"    ],",
 					'    "PostToolUse": [',
 					'      {',
 					'        "matcher": "*",',
-					'        "hooks": [".agentguard/openclaw-hook.command.sh"]',
+					'        "hooks": [".radius/openclaw-hook.command.sh"]',
 					"      }",
 					"    ]",
 					"  }",
@@ -236,15 +236,15 @@ export function generateWiringArtifacts(options: {
 				"nanobot-hooks.yaml",
 				[
 					"mcpServers:",
-					"  agentguard:",
-					`    command: \"npx agentguard serve --adapter nanobot --config ${configRef}\"`,
+					"  radius:",
+					`    command: \"npx agentradius serve --adapter nanobot --config ${configRef}\"`,
 					"",
 					"  # For each server to protect:",
 					"  filesystem:",
 					"    command: \"...\"",
 					"    hooks:",
-					'      "tools/call?direction=request": ["agentguard/pre_tool"]',
-					'      "tools/call?direction=response": ["agentguard/post_tool"]',
+					'      "tools/call?direction=request": ["radius/pre_tool"]',
+					'      "tools/call?direction=response": ["radius/post_tool"]',
 					"",
 				].join("\n"),
 			);
@@ -255,7 +255,7 @@ export function generateWiringArtifacts(options: {
 				"claude-telegram.module.yaml",
 				[
 					"modules:",
-					'  - import: "@agentguard/adapter-claude-telegram"',
+					'  - import: "@agentradius/adapter-claude-telegram"',
 					"    options:",
 					`      config: "${configRef}"`,
 					'      mode: "message_only" # message_only | message_plus_tool_hooks',
@@ -268,7 +268,7 @@ export function generateWiringArtifacts(options: {
 				true,
 			);
 			{
-				const commandPath = ".agentguard/claude-tool-hook.command.sh";
+				const commandPath = ".radius/claude-tool-hook.command.sh";
 				const settingsPath = path.join(
 					projectRoot,
 					".claude",
@@ -330,7 +330,7 @@ export async function run(): Promise<void> {
 
 	const framework =
 		fromArgs ?? detectFrameworkFromConfig(config.adapters) ?? "generic";
-	const configPath = path.resolve(args.configPath ?? "agentguard.yaml");
+	const configPath = path.resolve(args.configPath ?? "radius.yaml");
 
 	const result = generateWiringArtifacts({
 		framework,

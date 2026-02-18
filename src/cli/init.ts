@@ -5,7 +5,7 @@ import { getProfile, resolveProfileName } from "../config/profiles.js";
 import { generateWiringArtifacts } from "./install.js";
 
 const FRAMEWORKS = ["openclaw", "nanobot", "claude-telegram", "generic"] as const;
-const APPROVAL_CHANNELS = ["telegram"] as const;
+const APPROVAL_CHANNELS = ["telegram", "http"] as const;
 
 function parseArgs(): {
   framework: string;
@@ -16,9 +16,9 @@ function parseArgs(): {
 } {
   const args = process.argv.slice(3);
   let framework = "generic";
-  let profile = "balanced";
+  let profile = "standard";
   let mode: string | undefined;
-  let output = "./agentguard.yaml";
+  let output = "./radius.yaml";
   let approvals: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
@@ -73,7 +73,7 @@ export async function run(): Promise<void> {
     (profileConfig.moduleConfig?.command_guard as Record<string, unknown>) ?? {};
 
   const defaultCommandDenyPatterns =
-    resolvedProfile === "strict"
+    resolvedProfile === "local"
       ? [
           "(^|\\s)sudo\\s",
           "rm\\s+-rf\\s+/",
@@ -95,7 +95,7 @@ export async function run(): Promise<void> {
     (profileCommandGuard.denyPatterns as string[] | undefined) ??
     defaultCommandDenyPatterns;
 
-  if (approvals === "telegram" && !modules.includes("approval_gate")) {
+  if (approvals && !modules.includes("approval_gate")) {
     const auditIndex = modules.indexOf("audit");
     if (auditIndex >= 0) {
       modules.splice(auditIndex, 0, "approval_gate");
@@ -110,11 +110,14 @@ export async function run(): Promise<void> {
           enabled: true,
           mode: "sync_wait",
           waitTimeoutSec: 90,
+          temporaryGrantTtlSec: 1800,
+          maxTemporaryGrantTtlSec: 1800,
           onTimeout: "deny",
           onConnectorError: "deny",
           store: {
             engine: "sqlite",
-            path: "./.agentguard/approvals.db",
+            path: "./.radius/state.db",
+            required: true,
           },
           channels: {
             telegram: {
@@ -126,17 +129,58 @@ export async function run(): Promise<void> {
               pollIntervalMs: 1500,
               webhookPublicUrl: "",
             },
+            http: {
+              enabled: false,
+              url: "",
+              timeoutMs: 10000,
+              headers: {},
+            },
           },
         }
+      : approvals === "http"
+        ? {
+            enabled: true,
+            mode: "sync_wait",
+            waitTimeoutSec: 90,
+            temporaryGrantTtlSec: 1800,
+            maxTemporaryGrantTtlSec: 1800,
+            onTimeout: "deny",
+            onConnectorError: "deny",
+            store: {
+              engine: "sqlite",
+              path: "./.radius/state.db",
+              required: true,
+            },
+            channels: {
+              telegram: {
+                enabled: false,
+                transport: "polling",
+                botToken: "",
+                allowedChatIds: [],
+                approverUserIds: [],
+                pollIntervalMs: 1500,
+                webhookPublicUrl: "",
+              },
+              http: {
+                enabled: true,
+                url: "http://127.0.0.1:3101/approvals/resolve",
+                timeoutMs: 10000,
+                headers: {},
+              },
+            },
+          }
       : {
           enabled: false,
           mode: "sync_wait",
           waitTimeoutSec: 90,
+          temporaryGrantTtlSec: 1800,
+          maxTemporaryGrantTtlSec: 1800,
           onTimeout: "deny",
           onConnectorError: "deny",
           store: {
             engine: "sqlite",
-            path: "./.agentguard/approvals.db",
+            path: "./.radius/state.db",
+            required: true,
           },
           channels: {
             telegram: {
@@ -148,8 +192,59 @@ export async function run(): Promise<void> {
               pollIntervalMs: 1500,
               webhookPublicUrl: "",
             },
+            http: {
+              enabled: false,
+              url: "",
+              timeoutMs: 10000,
+              headers: {},
+            },
           },
         };
+
+  const approvalGateConfig =
+    approvals === "telegram"
+      ? {
+          autoRouting: {
+            defaultChannel: "telegram",
+            frameworkDefaults: {
+              openclaw: "telegram",
+              nanobot: "telegram",
+              "claude-telegram": "telegram",
+              generic: "http",
+            },
+            metadataKeys: ["channel", "provider", "transportChannel", "messenger"],
+          },
+          rules: [
+            {
+              tool: "Bash",
+              channel: "auto",
+              prompt: 'Approve execution of "Bash"?',
+              timeoutSec: 90,
+            },
+          ],
+        }
+      : approvals === "http"
+        ? {
+            autoRouting: {
+              defaultChannel: "http",
+              frameworkDefaults: {
+                openclaw: "http",
+                nanobot: "http",
+                "claude-telegram": "http",
+                generic: "http",
+              },
+              metadataKeys: ["channel", "provider", "transportChannel", "messenger"],
+            },
+            rules: [
+              {
+                tool: "Bash",
+                channel: "http",
+                prompt: 'Approve execution of "Bash"?',
+                timeoutSec: 90,
+              },
+            ],
+          }
+        : undefined;
 
   // Build config with adapter enabled
   const config = {
@@ -162,7 +257,7 @@ export async function run(): Promise<void> {
     },
     audit: {
       sink: "file",
-      path: "./agentguard-audit.jsonl",
+      path: "./radius-audit.jsonl",
       includeArguments: true,
       includeResults: false,
     },
@@ -175,30 +270,7 @@ export async function run(): Promise<void> {
     modules,
     moduleConfig: {
       ...profileConfig.moduleConfig,
-      ...(approvals === "telegram"
-        ? {
-            approval_gate: {
-              autoRouting: {
-                defaultChannel: "telegram",
-                frameworkDefaults: {
-                  openclaw: "telegram",
-                  nanobot: "telegram",
-                  "claude-telegram": "telegram",
-                  generic: "http",
-                },
-                metadataKeys: ["channel", "provider", "transportChannel", "messenger"],
-              },
-              rules: [
-                {
-                  tool: "Bash",
-                  channel: "auto",
-                  prompt: 'Approve execution of "Bash"?',
-                  timeoutSec: 90,
-                },
-              ],
-            },
-          }
-        : {}),
+      ...(approvalGateConfig ? { approval_gate: approvalGateConfig } : {}),
       tool_policy: {
         ...((profileConfig.moduleConfig?.tool_policy as Record<string, unknown>) ?? {}),
         rules: [
@@ -234,6 +306,15 @@ export async function run(): Promise<void> {
         ...profileCommandGuard,
         denyPatterns: commandGuardDenyPatterns,
       },
+      rate_budget: {
+        ...((profileConfig.moduleConfig?.rate_budget as Record<string, unknown>) ??
+          {}),
+        store: {
+          engine: "sqlite",
+          path: "./.radius/state.db",
+          required: true,
+        },
+      },
     },
   };
 
@@ -246,7 +327,7 @@ export async function run(): Promise<void> {
   const wiring = generateWiringArtifacts({
     framework: framework as (typeof FRAMEWORKS)[number],
     configPath: outputPath,
-    outputDir: path.join(path.dirname(outputPath), ".agentguard"),
+    outputDir: path.join(path.dirname(outputPath), ".radius"),
   });
 
   console.log(`Config written to ${outputPath}`);
@@ -259,13 +340,15 @@ export async function run(): Promise<void> {
   console.log(`  Wiring:    ${wiring.files.length} file(s) in ${wiring.outputDir}`);
   console.log(`\nNext steps:`);
   console.log(`  1. Review and customize ${output}`);
-  console.log(`  2. Review wiring snippets in ./.agentguard/`);
-  console.log(`  3. Run: agentguard doctor`);
-  console.log(`  4. Run: agentguard scan`);
+  console.log(`  2. Review wiring snippets in ./.radius/`);
+  console.log(`  3. Run: agentradius doctor`);
+  console.log(`  4. Run: agentradius scan`);
   if (approvals === "telegram") {
     console.log(`  5. Set TELEGRAM_BOT_TOKEN or edit approval.channels.telegram.botToken`);
     console.log(
-      `  6. Run: agentguard link telegram --chat-id <chat_id> --user-id <telegram_user_id>`,
+      `  6. Run: agentradius link telegram --chat-id <chat_id> --user-id <telegram_user_id>`,
     );
+  } else if (approvals === "http") {
+    console.log(`  5. Configure approval.channels.http.url to your approval endpoint`);
   }
 }

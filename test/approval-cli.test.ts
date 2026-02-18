@@ -16,18 +16,18 @@ function withArgv(argv: string[], fn: () => Promise<void>): Promise<void> {
 
 describe("approval onboarding CLI", () => {
   it("scaffolds and links telegram approval config", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentguard-approval-cli-"));
-    const configPath = path.join(tmpDir, "agentguard.yaml");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-approval-cli-"));
+    const configPath = path.join(tmpDir, "radius.yaml");
 
     await withArgv(
       [
         "node",
-        "agentguard",
+        "agentradius",
         "init",
         "--framework",
         "openclaw",
         "--profile",
-        "balanced",
+        "standard",
         "--output",
         configPath,
         "--approvals",
@@ -47,7 +47,7 @@ describe("approval onboarding CLI", () => {
     await withArgv(
       [
         "node",
-        "agentguard",
+        "agentradius",
         "link",
         "telegram",
         "--config",
@@ -74,13 +74,13 @@ describe("approval onboarding CLI", () => {
   });
 
   it("accepts slider mode aliases in init", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentguard-init-mode-"));
-    const configPath = path.join(tmpDir, "agentguard.yaml");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-init-mode-"));
+    const configPath = path.join(tmpDir, "radius.yaml");
 
     await withArgv(
       [
         "node",
-        "agentguard",
+        "agentradius",
         "init",
         "--framework",
         "nanobot",
@@ -96,6 +96,44 @@ describe("approval onboarding CLI", () => {
 
     const config = parseYaml(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
     const global = config.global as Record<string, unknown>;
-    expect(global.profile).toBe("balanced");
+    expect(global.profile).toBe("standard");
+  });
+
+  it("scaffolds http approval config", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-http-approval-cli-"));
+    const configPath = path.join(tmpDir, "radius.yaml");
+
+    await withArgv(
+      [
+        "node",
+        "agentradius",
+        "init",
+        "--framework",
+        "generic",
+        "--profile",
+        "standard",
+        "--output",
+        configPath,
+        "--approvals",
+        "http",
+      ],
+      async () => {
+        await initRun();
+      },
+    );
+
+    const config = parseYaml(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    const approval = config.approval as Record<string, unknown>;
+    const channels = approval.channels as Record<string, unknown>;
+    const http = channels.http as Record<string, unknown>;
+    const moduleConfig = config.moduleConfig as Record<string, unknown>;
+    const approvalGate = moduleConfig.approval_gate as Record<string, unknown>;
+    const rules = approvalGate.rules as Array<Record<string, unknown>>;
+
+    expect(approval.enabled).toBe(true);
+    expect(http.enabled).toBe(true);
+    expect(http.url).toBe("http://127.0.0.1:3101/approvals/resolve");
+    expect(config.modules).toContain("approval_gate");
+    expect(rules[0]?.channel).toBe("http");
   });
 });

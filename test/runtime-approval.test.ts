@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { stringify as toYaml } from "yaml";
 import { describe, expect, it } from "vitest";
-import { AgentGuardRuntime } from "../src/runtime.js";
+import { clearApprovalLeases } from "../src/approval/lease-store.js";
+import { RadiusRuntime } from "../src/runtime.js";
 
 function telegramResponse(result: unknown): Response {
   return new Response(JSON.stringify({ ok: true, result }), {
@@ -12,10 +13,10 @@ function telegramResponse(result: unknown): Response {
   });
 }
 
-function makeConfig(configPath: string): void {
+function makeConfig(configPath: string, stateDbPath: string): void {
   const config = {
     global: {
-      profile: "balanced",
+      profile: "standard",
       workspace: "${CWD}",
       defaultAction: "deny",
       requireSignedPolicy: false,
@@ -29,7 +30,8 @@ function makeConfig(configPath: string): void {
       onConnectorError: "deny",
       store: {
         engine: "sqlite",
-        path: "./.agentguard/approvals.db",
+        path: stateDbPath,
+        required: true,
       },
       channels: {
         telegram: {
@@ -66,9 +68,11 @@ function makeConfig(configPath: string): void {
 
 describe("Runtime Telegram approval resolution", () => {
   it("converts challenge to allow when Telegram callback approves", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentguard-runtime-"));
-    const configPath = path.join(tmpDir, "agentguard.yaml");
-    makeConfig(configPath);
+    clearApprovalLeases();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-runtime-"));
+    const configPath = path.join(tmpDir, "radius.yaml");
+    const stateDbPath = path.join(tmpDir, "state.db");
+    makeConfig(configPath, stateDbPath);
 
     const originalFetch = globalThis.fetch;
     let approveCallbackData = "";
@@ -101,7 +105,7 @@ describe("Runtime Telegram approval resolution", () => {
     }) as typeof fetch;
 
     try {
-      const runtime = new AgentGuardRuntime({
+      const runtime = new RadiusRuntime({
         configPath,
         framework: "openclaw",
       });
@@ -116,13 +120,16 @@ describe("Runtime Telegram approval resolution", () => {
       expect(response.decision).toBe("allow");
     } finally {
       globalThis.fetch = originalFetch;
+      clearApprovalLeases();
     }
   });
 
   it("converts challenge to deny when Telegram callback denies", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentguard-runtime-"));
-    const configPath = path.join(tmpDir, "agentguard.yaml");
-    makeConfig(configPath);
+    clearApprovalLeases();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-runtime-"));
+    const configPath = path.join(tmpDir, "radius.yaml");
+    const stateDbPath = path.join(tmpDir, "state.db");
+    makeConfig(configPath, stateDbPath);
 
     const originalFetch = globalThis.fetch;
     let denyCallbackData = "";
@@ -132,7 +139,7 @@ describe("Runtime Telegram approval resolution", () => {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
 
       if (method === "sendMessage") {
-        denyCallbackData = body.reply_markup.inline_keyboard[0][1].callback_data;
+        denyCallbackData = body.reply_markup.inline_keyboard[0][2].callback_data;
         return telegramResponse({ message_id: 2 });
       }
       if (method === "getUpdates") {
@@ -155,7 +162,7 @@ describe("Runtime Telegram approval resolution", () => {
     }) as typeof fetch;
 
     try {
-      const runtime = new AgentGuardRuntime({
+      const runtime = new RadiusRuntime({
         configPath,
         framework: "openclaw",
       });
@@ -171,6 +178,84 @@ describe("Runtime Telegram approval resolution", () => {
       expect(response.reason).toContain("telegram approval denied");
     } finally {
       globalThis.fetch = originalFetch;
+      clearApprovalLeases();
+    }
+  });
+
+  it("grants temporary 30m approval and bypasses repeated prompts in the same OpenClaw session", async () => {
+    clearApprovalLeases();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-runtime-"));
+    const configPath = path.join(tmpDir, "radius.yaml");
+    const stateDbPath = path.join(tmpDir, "state.db");
+    makeConfig(configPath, stateDbPath);
+
+    const originalFetch = globalThis.fetch;
+    let grant30mCallbackData = "";
+    let sendMessageCalls = 0;
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = url.split("/").pop();
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+
+      if (method === "sendMessage") {
+        sendMessageCalls += 1;
+        grant30mCallbackData = body.reply_markup.inline_keyboard[0][1].callback_data;
+        return telegramResponse({ message_id: 3 });
+      }
+      if (method === "getUpdates") {
+        return telegramResponse([
+          {
+            update_id: 3,
+            callback_query: {
+              id: "cb-grant30m",
+              from: { id: 200 },
+              message: { chat: { id: 100 } },
+              data: grant30mCallbackData,
+            },
+          },
+        ]);
+      }
+      if (method === "answerCallbackQuery") {
+        return telegramResponse(true);
+      }
+      throw new Error(`Unexpected Telegram method: ${method}`);
+    }) as typeof fetch;
+
+    try {
+      const runtime = new RadiusRuntime({
+        configPath,
+        framework: "openclaw",
+      });
+
+      const first = (await runtime.evaluate({
+        hook_type: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "echo first" },
+        session_id: "s-lease",
+        agent_name: "builder",
+      })) as { decision: string; reason?: string };
+
+      expect(first.decision).toBe("allow");
+
+      const secondRuntime = new RadiusRuntime({
+        configPath,
+        framework: "openclaw",
+      });
+
+      const second = (await secondRuntime.evaluate({
+        hook_type: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "echo second" },
+        session_id: "s-lease",
+        agent_name: "builder",
+      })) as { decision: string; reason?: string };
+
+      expect(second.decision).toBe("allow");
+      expect(sendMessageCalls).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearApprovalLeases();
     }
   });
 });

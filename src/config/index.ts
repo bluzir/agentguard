@@ -1,14 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { AgentGuardConfig, ProfileName } from "../types.js";
+import type { RadiusConfig, ProfileName } from "../types.js";
 import { getProfile, resolveProfileName } from "./profiles.js";
 
 export { getProfile, PROFILES } from "./profiles.js";
 
-const DEFAULT_CONFIG: AgentGuardConfig = {
+const DEFAULT_CONFIG: RadiusConfig = {
   global: {
-    profile: "balanced",
+    profile: "standard",
     workspace: process.cwd(),
     defaultAction: "deny",
     requireSignedPolicy: false,
@@ -16,7 +16,7 @@ const DEFAULT_CONFIG: AgentGuardConfig = {
   },
   audit: {
     sink: "file",
-    path: "./agentguard-audit.jsonl",
+    path: "./radius-audit.jsonl",
     includeArguments: true,
     includeResults: false,
   },
@@ -28,7 +28,8 @@ const DEFAULT_CONFIG: AgentGuardConfig = {
     onConnectorError: "deny",
     store: {
       engine: "sqlite",
-      path: "./.agentguard/approvals.db",
+      path: "./.radius/state.db",
+      required: false,
     },
     channels: {
       telegram: {
@@ -38,6 +39,12 @@ const DEFAULT_CONFIG: AgentGuardConfig = {
         allowedChatIds: [],
         approverUserIds: [],
         pollIntervalMs: 1500,
+      },
+      http: {
+        enabled: false,
+        url: "",
+        timeoutMs: 10000,
+        headers: {},
       },
     },
   },
@@ -131,9 +138,9 @@ function normalizeAdapters(
 }
 
 /**
- * Load and resolve agentguard config from a YAML file.
+ * Load and resolve radius config from a YAML file.
  */
-export function loadConfig(configPath?: string): AgentGuardConfig {
+export function loadConfig(configPath?: string): RadiusConfig {
   const filePath = configPath ?? findConfigFile();
 
   let rawConfig: Record<string, unknown> = {};
@@ -146,7 +153,7 @@ export function loadConfig(configPath?: string): AgentGuardConfig {
   let config = deepMerge(
     DEFAULT_CONFIG as unknown as Record<string, unknown>,
     {},
-  ) as unknown as AgentGuardConfig;
+  ) as unknown as RadiusConfig;
 
   // Apply profile defaults
   const profileName =
@@ -161,13 +168,13 @@ export function loadConfig(configPath?: string): AgentGuardConfig {
   config = deepMerge(
     config as unknown as Record<string, unknown>,
     profileDefaults as Record<string, unknown>,
-  ) as unknown as AgentGuardConfig;
+  ) as unknown as RadiusConfig;
 
   // Apply user config on top
   config = deepMerge(
     config as unknown as Record<string, unknown>,
     rawConfig,
-  ) as unknown as AgentGuardConfig;
+  ) as unknown as RadiusConfig;
 
   // Expand template variables
   const workspace = config.global.workspace ?? process.cwd();
@@ -181,7 +188,7 @@ export function loadConfig(configPath?: string): AgentGuardConfig {
     config,
     vars,
     config.global.onUndefinedTemplateVar,
-  ) as AgentGuardConfig;
+  ) as RadiusConfig;
 
   config.adapters = normalizeAdapters(config.adapters);
   config.global.profile = resolveProfileName(config.global.profile);
@@ -191,9 +198,9 @@ export function loadConfig(configPath?: string): AgentGuardConfig {
 
 function findConfigFile(): string | undefined {
   const candidates = [
-    path.join(process.cwd(), "agentguard.yaml"),
-    path.join(process.cwd(), "agentguard.yml"),
-    path.join(process.cwd(), ".agentguard.yaml"),
+    path.join(process.cwd(), "radius.yaml"),
+    path.join(process.cwd(), "radius.yml"),
+    path.join(process.cwd(), ".radius.yaml"),
   ];
   return candidates.find((c) => fs.existsSync(c));
 }

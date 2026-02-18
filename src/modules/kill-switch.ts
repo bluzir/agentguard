@@ -27,7 +27,7 @@ export class KillSwitchModule extends BaseModule {
   ]);
 
   private enabled = true;
-  private envVar = "AGENTGUARD_KILL_SWITCH";
+  private envVar = "RADIUS_KILL_SWITCH";
   private filePath = "";
   private denyPhases = new Set([GuardPhase.PRE_REQUEST, GuardPhase.PRE_TOOL]);
   private denyReason =
@@ -37,7 +37,7 @@ export class KillSwitchModule extends BaseModule {
     super.configure(config);
     const c = config as unknown as Partial<KillSwitchConfig>;
     this.enabled = c.enabled ?? true;
-    this.envVar = c.envVar ?? "AGENTGUARD_KILL_SWITCH";
+    this.envVar = c.envVar ?? "RADIUS_KILL_SWITCH";
     this.filePath = c.filePath ?? "";
     this.denyReason =
       c.reason ?? "emergency kill switch active: human safety override";

@@ -1,5 +1,5 @@
 import * as readline from "node:readline";
-import { AgentGuardRuntime } from "../runtime.js";
+import { RadiusRuntime } from "../runtime.js";
 
 /**
  * stdin/stdout adapter entrypoint.
@@ -26,7 +26,7 @@ export async function run(): Promise<void> {
     }
   }
 
-  const runtime = new AgentGuardRuntime({
+  const runtime = new RadiusRuntime({
     configPath,
     framework: framework as "openclaw" | "nanobot" | "claude-telegram" | "generic" | undefined,
   });
@@ -45,7 +45,7 @@ export async function run(): Promise<void> {
       process.stdout.write(JSON.stringify(result) + "\n");
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown error";
-      process.stderr.write(`[agentguard:hook] error: ${message}\n`);
+      process.stderr.write(`[radius:hook] error: ${message}\n`);
       process.stdout.write(
         JSON.stringify({ error: message }) + "\n",
       );

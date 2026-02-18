@@ -133,7 +133,7 @@ export interface SecurityModule {
 
 // ── Config types ──
 
-export type ProfileName = "strict" | "balanced" | "monitor";
+export type ProfileName = "local" | "standard" | "unbounded";
 
 export interface AuditConfig {
   sink: "file" | "stdout" | "webhook" | "otlp";
@@ -149,6 +149,7 @@ export interface AuditConfig {
 export interface ApprovalStoreConfig {
   engine: "sqlite" | "memory";
   path?: string;
+  required?: boolean;
 }
 
 export interface TelegramApprovalChannelConfig {
@@ -161,14 +162,24 @@ export interface TelegramApprovalChannelConfig {
   webhookPublicUrl?: string;
 }
 
+export interface HttpApprovalChannelConfig {
+  enabled: boolean;
+  url: string;
+  timeoutMs: number;
+  headers: Record<string, string>;
+}
+
 export interface ApprovalChannelsConfig {
   telegram?: TelegramApprovalChannelConfig;
+  http?: HttpApprovalChannelConfig;
 }
 
 export interface ApprovalConfig {
   enabled: boolean;
   mode: "sync_wait" | "async_token";
   waitTimeoutSec: number;
+  temporaryGrantTtlSec?: number;
+  maxTemporaryGrantTtlSec?: number;
   onTimeout: "deny" | "alert";
   onConnectorError: "deny" | "alert";
   store: ApprovalStoreConfig;
@@ -183,7 +194,7 @@ export interface GlobalConfig {
   onUndefinedTemplateVar: "error" | "empty";
 }
 
-export interface AgentGuardConfig {
+export interface RadiusConfig {
   global: GlobalConfig;
   audit: AuditConfig;
   approval: ApprovalConfig;
@@ -191,3 +202,6 @@ export interface AgentGuardConfig {
   modules: string[];
   moduleConfig: Record<string, Record<string, unknown>>;
 }
+
+/** @deprecated Use RadiusConfig */
+export type AgentGuardConfig = RadiusConfig;

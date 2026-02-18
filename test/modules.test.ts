@@ -242,24 +242,24 @@ describe("ToolPolicyModule", () => {
 describe("KillSwitchModule", () => {
 	it("denies PRE_TOOL when env kill switch is active", async () => {
 		const mod = new KillSwitchModule();
-		mod.configure({ envVar: "AGENTGUARD_TEST_KILL_SWITCH" });
+		mod.configure({ envVar: "RADIUS_TEST_KILL_SWITCH" });
 
-		process.env.AGENTGUARD_TEST_KILL_SWITCH = "1";
+		process.env.RADIUS_TEST_KILL_SWITCH = "1";
 		try {
 			const result = await mod.evaluate(
 				makeToolEvent("Bash", { command: "echo hi" }),
 			);
 			expect(result.action).toBe(DecisionAction.DENY);
 		} finally {
-			delete process.env.AGENTGUARD_TEST_KILL_SWITCH;
+			delete process.env.RADIUS_TEST_KILL_SWITCH;
 		}
 	});
 
 	it("allows when kill switch is inactive", async () => {
 		const mod = new KillSwitchModule();
-		mod.configure({ envVar: "AGENTGUARD_TEST_KILL_SWITCH" });
+		mod.configure({ envVar: "RADIUS_TEST_KILL_SWITCH" });
 
-		delete process.env.AGENTGUARD_TEST_KILL_SWITCH;
+		delete process.env.RADIUS_TEST_KILL_SWITCH;
 		const result = await mod.evaluate(
 			makeToolEvent("Bash", { command: "echo hi" }),
 		);
@@ -336,7 +336,7 @@ describe("FsGuardModule", () => {
 	});
 
 	it("denies symlink escape outside allowlisted workspace", async () => {
-		const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentguard-fs-"));
+		const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "radius-fs-"));
 		const workspace = path.join(tmpRoot, "workspace");
 		const outside = path.join(tmpRoot, "outside");
 		const escapedFile = path.join(outside, "secret.txt");
@@ -567,6 +567,53 @@ describe("RateBudgetModule", () => {
 		const result = await mod.evaluate(event);
 		expect(result.action).toBe(DecisionAction.DENY);
 	});
+
+	it("persists budget across module instances with sqlite store", async () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-budget-"));
+		const dbPath = path.join(tmpDir, "state.db");
+
+		const first = new RateBudgetModule();
+		first.configure({
+			windowSec: 60,
+			maxCallsPerWindow: 2,
+			store: {
+				engine: "sqlite",
+				path: dbPath,
+				required: true,
+			},
+		});
+
+		const second = new RateBudgetModule();
+		second.configure({
+			windowSec: 60,
+			maxCallsPerWindow: 2,
+			store: {
+				engine: "sqlite",
+				path: dbPath,
+				required: true,
+			},
+		});
+
+		const third = new RateBudgetModule();
+		third.configure({
+			windowSec: 60,
+			maxCallsPerWindow: 2,
+			store: {
+				engine: "sqlite",
+				path: dbPath,
+				required: true,
+			},
+		});
+
+		const event = {
+			...makeToolEvent("Read"),
+			sessionId: "persistent-budget-session",
+		};
+
+		expect((await first.evaluate(event)).action).toBe(DecisionAction.ALLOW);
+		expect((await second.evaluate(event)).action).toBe(DecisionAction.ALLOW);
+		expect((await third.evaluate(event)).action).toBe(DecisionAction.DENY);
+	});
 });
 
 describe("ApprovalGateModule", () => {
@@ -679,7 +726,7 @@ describe("SkillScannerModule", () => {
 	it("denies untrusted signer when trusted list is configured", async () => {
 		const mod = new SkillScannerModule();
 		mod.configure({
-			trustedSigners: ["security-team@agentguard.dev"],
+			trustedSigners: ["security-team@radius.dev"],
 			onProvenanceFailure: "deny",
 		});
 
@@ -703,7 +750,7 @@ describe("SkillScannerModule", () => {
 			requireSignature: true,
 			requireSbom: true,
 			requirePinnedSource: true,
-			trustedSigners: ["security-team@agentguard.dev"],
+			trustedSigners: ["security-team@radius.dev"],
 			onProvenanceFailure: "deny",
 		});
 
@@ -713,7 +760,7 @@ describe("SkillScannerModule", () => {
 					kind: "skill",
 					content: "This is a normal skill that helps users write code.",
 					signatureVerified: true,
-					signer: "security-team@agentguard.dev",
+					signer: "security-team@radius.dev",
 					sbomUri: "file:///workspace/skills/example.sbom.json",
 					versionPinned: true,
 					sourceUri: "npm:@scope/example-skill@1.2.3",

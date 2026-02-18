@@ -1,15 +1,15 @@
-import type { AgentGuardConfig } from "../types.js";
+import type { RadiusConfig } from "../types.js";
 
 type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
 
 /**
- * §12.1 strict — default production profile.
+ * §12.1 local — default production profile.
  */
-const strict: DeepPartial<AgentGuardConfig> = {
+const local: DeepPartial<RadiusConfig> = {
   global: {
-    profile: "strict",
+    profile: "local",
     defaultAction: "deny",
   },
   modules: [
@@ -27,8 +27,8 @@ const strict: DeepPartial<AgentGuardConfig> = {
   moduleConfig: {
     kill_switch: {
       enabled: true,
-      envVar: "AGENTGUARD_KILL_SWITCH",
-      filePath: "./.agentguard/KILL_SWITCH",
+      envVar: "RADIUS_KILL_SWITCH",
+      filePath: "./.radius/KILL_SWITCH",
       denyPhases: ["pre_request", "pre_tool"],
       reason: "emergency kill switch active: human safety override",
     },
@@ -76,11 +76,11 @@ const strict: DeepPartial<AgentGuardConfig> = {
 };
 
 /**
- * §12.2 balanced — developer default profile.
+ * §12.2 standard — developer default profile.
  */
-const balanced: DeepPartial<AgentGuardConfig> = {
+const standard: DeepPartial<RadiusConfig> = {
   global: {
-    profile: "balanced",
+    profile: "standard",
     defaultAction: "deny",
   },
   modules: [
@@ -97,8 +97,8 @@ const balanced: DeepPartial<AgentGuardConfig> = {
   moduleConfig: {
     kill_switch: {
       enabled: true,
-      envVar: "AGENTGUARD_KILL_SWITCH",
-      filePath: "./.agentguard/KILL_SWITCH",
+      envVar: "RADIUS_KILL_SWITCH",
+      filePath: "./.radius/KILL_SWITCH",
       denyPhases: ["pre_request", "pre_tool"],
       reason: "emergency kill switch active: human safety override",
     },
@@ -128,11 +128,11 @@ const balanced: DeepPartial<AgentGuardConfig> = {
 };
 
 /**
- * §12.3 monitor — migration/rollout mode.
+ * §12.3 unbounded — migration/rollout mode.
  */
-const monitor: DeepPartial<AgentGuardConfig> = {
+const unbounded: DeepPartial<RadiusConfig> = {
   global: {
-    profile: "monitor",
+    profile: "unbounded",
     defaultAction: "allow",
   },
   modules: [
@@ -148,8 +148,8 @@ const monitor: DeepPartial<AgentGuardConfig> = {
   moduleConfig: {
     kill_switch: {
       enabled: true,
-      envVar: "AGENTGUARD_KILL_SWITCH",
-      filePath: "./.agentguard/KILL_SWITCH",
+      envVar: "RADIUS_KILL_SWITCH",
+      filePath: "./.radius/KILL_SWITCH",
       denyPhases: ["pre_request", "pre_tool"],
       reason: "emergency kill switch active: human safety override",
       mode: "observe",
@@ -181,13 +181,16 @@ const monitor: DeepPartial<AgentGuardConfig> = {
   },
 };
 
-export const PROFILES = { strict, balanced, monitor } as const;
+export const PROFILES = { local, standard, unbounded } as const;
 
 const PROFILE_ALIASES = {
-  bunker: "strict",
-  tactical: "balanced",
-  yolo: "monitor",
-  unleashed: "monitor",
+  strict: "local",
+  balanced: "standard",
+  monitor: "unbounded",
+  bunker: "local",
+  tactical: "standard",
+  yolo: "unbounded",
+  unleashed: "unbounded",
 } as const;
 
 export type CanonicalProfileName = keyof typeof PROFILES;
@@ -204,10 +207,10 @@ export function resolveProfileName(name: string): CanonicalProfileName {
     return mapped;
   }
   throw new Error(
-    `unknown profile/mode: "${name}". Available profiles: strict, balanced, monitor. Available modes: bunker, tactical, yolo`,
+    `unknown profile/mode: "${name}". Available profiles: local, standard, unbounded. Aliases: strict, balanced, monitor, bunker, tactical, yolo`,
   );
 }
 
-export function getProfile(name: string): DeepPartial<AgentGuardConfig> {
+export function getProfile(name: string): DeepPartial<RadiusConfig> {
   return PROFILES[resolveProfileName(name)];
 }

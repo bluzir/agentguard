@@ -16,7 +16,7 @@ dist/
 *.pfx
 
 # Audit logs
-agentguard-audit.jsonl
+radius-audit.jsonl
 *.log
 
 # Internal docs
