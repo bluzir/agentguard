@@ -1,6 +1,6 @@
 {
   "name": "agentgrd",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Framework-agnostic security layer for AI agent orchestrators",
   "type": "module",
   "main": "./dist/index.js",
