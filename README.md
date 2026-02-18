@@ -1,8 +1,23 @@
-# RADIUS
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/banner.png">
+    <img alt="RADIUS" src="assets/banner.png" width="960">
+  </picture>
+</p>
 
-Draw the boundary.
+<p align="center">
+  <strong>Draw the boundary.</strong><br>
+  No LLM in the decision loop.
+</p>
 
-Deterministic security controls for AI agents. No LLM in the decision loop.
+<p align="center">
+  <a href="https://www.npmjs.com/package/agentradius"><img src="https://img.shields.io/npm/v/agentradius?style=flat&color=2563EB&label=npm" alt="npm"></a>
+  <a href="https://github.com/bluzir/radius/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-111827?style=flat" alt="MIT"></a>
+  <a href="https://www.agentradius.cc"><img src="https://img.shields.io/badge/docs-agentradius.cc-6B7280?style=flat" alt="docs"></a>
+</p>
+
+---
 
 > "The more data & control you give to the AI agent: (A) the more it can help you AND (B) the more it can hurt you." — [Lex Fridman](https://x.com/lexfridman/status/2023573186496037044)
 
