@@ -41,6 +41,27 @@ Numbers from 78 validated research sources (114 analyzed), Feb 2026:
 
 A regex match on `rm -rf` is true or false. The agent can't talk its way past it.
 
+## What RADIUS does
+
+RADIUS sits between the agent and every tool call. Before the agent reads a file, runs a command, or makes a network request, RADIUS intercepts the call, runs it through a pipeline of modules, and returns one of five verdicts:
+
+- **allow** — proceed
+- **deny** — block the call, return a reason
+- **modify** — patch the arguments (e.g. strip dangerous flags)
+- **challenge** — pause and ask a human for approval
+- **alert** — log it, let it through
+
+You choose which modules run and how strict each one is. Want to block `~/.ssh` reads but allow `/tmp`? That's one line in `fs_guard`. Want to require Telegram approval for `Bash` calls but not for `Read`? That's one rule in `approval_gate`. Every module is independent — turn them on, off, or configure each one separately.
+
+The point is granularity without complexity. You start with a profile (`local`, `standard`, or `unbounded`) that gives you sensible defaults for every module. Then you adjust whatever you want in `radius.yaml`. Two commands to get running:
+
+```bash
+npm install agentradius
+npx agentradius init --framework openclaw --profile standard
+```
+
+That's it. You have filesystem locks, shell blocking, secret redaction, rate limits, and an audit log. No boilerplate, no infrastructure, no external services.
+
 ## Modules
 
 Eleven modules, none with an LLM. They block or allow based on rules you write.
