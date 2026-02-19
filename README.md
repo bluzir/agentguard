@@ -78,6 +78,11 @@ Deterministic modules. Enable only what you need.
 | `verdict_provider` | Optional external verdict provider integration (deterministic adapter contract). |
 | `audit` | Append-only log of every decision. Every action, every timestamp. |
 
+New in `0.5.x`:
+- `self_defense` for immutable control-plane protection (opt-in)
+- `tripwire_guard` for honeytoken tripwires (opt-in)
+- `repetition_guard` for repeated identical tool-call loops (opt-in)
+
 ## Three postures
 
 One config change. Pick the containment level that matches your context.
@@ -198,7 +203,7 @@ moduleConfig:
     store:
       engine: sqlite
       path: ./.radius/state.db
-      required: true
+      required: false # set true when node:sqlite is available (Node 22+)
 ```
 
 Optional hardening modules (all opt-in):
@@ -232,7 +237,7 @@ moduleConfig:
     store:
       engine: sqlite
       path: ./.radius/state.db
-      required: true
+      required: false # set true when node:sqlite is available (Node 22+)
 
   exec_sandbox:
     engine: bwrap
@@ -302,14 +307,14 @@ approval:
   store:
     engine: sqlite
     path: ./.radius/state.db
-    required: true
+    required: false # set true when node:sqlite is available (Node 22+)
 
 moduleConfig:
   rate_budget:
     store:
       engine: sqlite
       path: ./.radius/state.db
-      required: true
+      required: false # set true when node:sqlite is available (Node 22+)
 ```
 
 | Module | Subprocess mode | Note |
