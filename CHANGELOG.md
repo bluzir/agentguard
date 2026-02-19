@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-02-19
+
+### Fixed
+
+- `init` now sets SQLite `store.required` based on runtime support for `node:sqlite`, preventing fail-closed regressions on Node runtimes without the module (for example common Node 20 CI setups).
+- Runtime and module test suites now handle environments without `node:sqlite` deterministically.
+
+### Changed
+
+- README examples updated for `0.5.x` modules and clarified SQLite `required` guidance.
+
 ## [0.5.0] - 2026-02-19
 
 ### Added
