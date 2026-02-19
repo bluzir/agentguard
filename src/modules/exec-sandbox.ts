@@ -7,6 +7,9 @@ interface ExecSandboxConfig {
 	engine?: "bwrap" | "none";
 	required?: boolean;
 	shareNetwork?: boolean;
+	childPolicy?: {
+		network?: "inherit" | "deny";
+	};
 	readOnlyPaths?: string[];
 	readWritePaths?: string[];
 	tmpfsPaths?: string[];
@@ -36,6 +39,7 @@ export class ExecSandboxModule extends BaseModule {
 	private engine: "bwrap" | "none" = "none";
 	private required = false;
 	private shareNetwork = true;
+	private childNetworkPolicy: "inherit" | "deny" = "inherit";
 	private readOnlyPaths: string[] = DEFAULT_READ_ONLY_PATHS;
 	private readWritePaths: string[] = [];
 	private tmpfsPaths: string[] = DEFAULT_TMPFS_PATHS;
@@ -49,6 +53,7 @@ export class ExecSandboxModule extends BaseModule {
 		this.engine = c.engine ?? "none";
 		this.required = c.required ?? false;
 		this.shareNetwork = c.shareNetwork ?? true;
+		this.childNetworkPolicy = c.childPolicy?.network ?? "inherit";
 		this.readOnlyPaths = this.normalizePaths(
 			c.readOnlyPaths,
 			DEFAULT_READ_ONLY_PATHS,
@@ -119,12 +124,13 @@ export class ExecSandboxModule extends BaseModule {
 	}
 
 	private wrapWithBwrap(command: string): string {
+		const shareNetwork = this.shareNetwork && this.childNetworkPolicy !== "deny";
 		const args: string[] = [
 			"bwrap",
 			"--die-with-parent",
 			"--new-session",
 			"--unshare-all",
-			...(this.shareNetwork ? ["--share-net"] : []),
+			...(shareNetwork ? ["--share-net"] : []),
 			"--proc",
 			"/proc",
 			"--dev",

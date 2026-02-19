@@ -12,8 +12,11 @@ import { FsGuardModule } from "../src/modules/fs-guard.js";
 import { KillSwitchModule } from "../src/modules/kill-switch.js";
 import { OutputDlpModule } from "../src/modules/output-dlp.js";
 import { RateBudgetModule } from "../src/modules/rate-budget.js";
+import { RepetitionGuardModule } from "../src/modules/repetition-guard.js";
+import { SelfDefenseModule } from "../src/modules/self-defense.js";
 import { SkillScannerModule } from "../src/modules/skill-scanner.js";
 import { ToolPolicyModule } from "../src/modules/tool-policy.js";
+import { TripwireGuardModule } from "../src/modules/tripwire-guard.js";
 import { VerdictProviderModule } from "../src/modules/verdict-provider.js";
 import { DecisionAction, type GuardEvent, GuardPhase } from "../src/types.js";
 
@@ -237,6 +240,32 @@ describe("ToolPolicyModule", () => {
 		);
 		expect(result.action).toBe(DecisionAction.ALLOW);
 	});
+
+	it("returns challenge when rule action is challenge", async () => {
+		const mod = new ToolPolicyModule();
+		mod.configure({
+			default: "deny",
+			rules: [
+				{
+					tool: "Bash",
+					action: "challenge",
+					challenge: {
+						channel: "telegram",
+						prompt: "Approve risky Bash?",
+						timeoutSec: 45,
+					},
+				},
+			],
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Bash", { command: "curl https://example.com" }),
+		);
+		expect(result.action).toBe(DecisionAction.CHALLENGE);
+		expect(result.challenge?.channel).toBe("telegram");
+		expect(result.challenge?.prompt).toContain("Approve risky Bash?");
+		expect(result.challenge?.timeoutSec).toBe(45);
+	});
 });
 
 describe("KillSwitchModule", () => {
@@ -264,6 +293,69 @@ describe("KillSwitchModule", () => {
 			makeToolEvent("Bash", { command: "echo hi" }),
 		);
 		expect(result.action).toBe(DecisionAction.ALLOW);
+	});
+});
+
+describe("SelfDefenseModule", () => {
+	it("denies mutating immutable config path", async () => {
+		const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "radius-self-defense-"));
+		const configPath = path.join(tmpRoot, "radius.yaml");
+		fs.writeFileSync(configPath, "global:\n  profile: standard\n", "utf8");
+
+		const mod = new SelfDefenseModule();
+		mod.configure({
+			immutablePaths: [configPath],
+			includeDiscoveredConfig: false,
+			includeHookArtifacts: false,
+			monitorHashes: false,
+			onWriteAttempt: "deny",
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Write", { file_path: configPath, content: "tamper" }),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("SELF_DEFENSE_IMMUTABLE_WRITE");
+
+		fs.rmSync(tmpRoot, { recursive: true, force: true });
+	});
+
+	it("triggers kill switch on immutable hash mismatch", async () => {
+		const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "radius-self-defense-"));
+		const configPath = path.join(tmpRoot, "radius.yaml");
+		const killSwitchPath = path.join(tmpRoot, ".radius", "KILL_SWITCH");
+		fs.writeFileSync(configPath, "global:\n  profile: standard\n", "utf8");
+
+		const mod = new SelfDefenseModule();
+		mod.configure({
+			immutablePaths: [configPath],
+			includeDiscoveredConfig: false,
+			includeHookArtifacts: false,
+			monitorHashes: true,
+			onHashMismatch: "kill_switch",
+			killSwitchFilePath: killSwitchPath,
+		});
+
+		const baseline = await mod.evaluate({
+			phase: GuardPhase.PRE_REQUEST,
+			framework: "generic",
+			sessionId: "self-defense-hash",
+			metadata: {},
+		});
+		expect(baseline.action).toBe(DecisionAction.ALLOW);
+
+		fs.writeFileSync(configPath, "global:\n  profile: local\n", "utf8");
+		const tamperCheck = await mod.evaluate({
+			phase: GuardPhase.POST_TOOL,
+			framework: "generic",
+			sessionId: "self-defense-hash",
+			metadata: {},
+		});
+		expect(tamperCheck.action).toBe(DecisionAction.DENY);
+		expect(tamperCheck.reason).toContain("SELF_DEFENSE_HASH_MISMATCH");
+		expect(fs.existsSync(killSwitchPath)).toBe(true);
+
+		fs.rmSync(tmpRoot, { recursive: true, force: true });
 	});
 });
 
@@ -362,6 +454,70 @@ describe("FsGuardModule", () => {
 	});
 });
 
+describe("TripwireGuardModule", () => {
+	it("denies when a file tripwire is touched", async () => {
+		const mod = new TripwireGuardModule();
+		mod.configure({
+			fileTokens: ["/workspace/salary_2026.csv"],
+			onTrip: "deny",
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Read", { file_path: "/workspace/salary_2026.csv" }),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("TRIPWIRE_FILE_HIT");
+	});
+
+	it("supports prefix file tripwires", async () => {
+		const mod = new TripwireGuardModule();
+		mod.configure({
+			fileTokens: ["/workspace/.tripwire/**"],
+			onTrip: "deny",
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Read", { file_path: "/workspace/.tripwire/decoy.txt" }),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("TRIPWIRE_FILE_HIT");
+	});
+
+	it("triggers kill switch when env tripwire is referenced", async () => {
+		const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "radius-tripwire-"));
+		const killSwitchPath = path.join(tmpRoot, ".radius", "KILL_SWITCH");
+
+		const mod = new TripwireGuardModule();
+		mod.configure({
+			envTokens: ["RADIUS_TRIPWIRE_SECRET"],
+			onTrip: "kill_switch",
+			killSwitchFilePath: killSwitchPath,
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Bash", { command: "echo $RADIUS_TRIPWIRE_SECRET" }),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("TRIPWIRE_ENV_HIT");
+		expect(fs.existsSync(killSwitchPath)).toBe(true);
+
+		fs.rmSync(tmpRoot, { recursive: true, force: true });
+	});
+
+	it("allows when no tripwire token is touched", async () => {
+		const mod = new TripwireGuardModule();
+		mod.configure({
+			fileTokens: ["/workspace/salary_2026.csv"],
+			envTokens: ["RADIUS_TRIPWIRE_SECRET"],
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("Read", { file_path: "/workspace/notes.txt" }),
+		);
+		expect(result.action).toBe(DecisionAction.ALLOW);
+	});
+});
+
 describe("CommandGuardModule", () => {
 	it("blocks sudo by default policy", async () => {
 		const mod = new CommandGuardModule();
@@ -452,6 +608,66 @@ describe("ExecSandboxModule", () => {
 		expect(result.patch?.toolArguments?.command).toContain("'--unshare-all'");
 		expect(result.patch?.toolArguments?.command).toContain("'sh'");
 	});
+
+	it("keeps legacy network behavior when childPolicy is omitted", async () => {
+		const mod = new ExecSandboxModule();
+		mod.configure({
+			engine: "bwrap",
+			required: true,
+			shareNetwork: true,
+		});
+		(
+			mod as unknown as { checkBwrapAvailable: () => Promise<boolean> }
+		).checkBwrapAvailable = async () => true;
+
+		const result = await mod.evaluate(
+			makeToolEvent("Bash", { command: "echo hello" }),
+		);
+		expect(result.action).toBe(DecisionAction.MODIFY);
+		expect(result.patch?.toolArguments?.command).toContain("'--share-net'");
+	});
+
+	it("keeps shared network for children when childPolicy.network=inherit", async () => {
+		const mod = new ExecSandboxModule();
+		mod.configure({
+			engine: "bwrap",
+			required: true,
+			shareNetwork: true,
+			childPolicy: {
+				network: "inherit",
+			},
+		});
+		(
+			mod as unknown as { checkBwrapAvailable: () => Promise<boolean> }
+		).checkBwrapAvailable = async () => true;
+
+		const result = await mod.evaluate(
+			makeToolEvent("Bash", { command: "echo hello" }),
+		);
+		expect(result.action).toBe(DecisionAction.MODIFY);
+		expect(result.patch?.toolArguments?.command).toContain("'--share-net'");
+	});
+
+	it("denies network for child processes when childPolicy.network=deny", async () => {
+		const mod = new ExecSandboxModule();
+		mod.configure({
+			engine: "bwrap",
+			required: true,
+			shareNetwork: true,
+			childPolicy: {
+				network: "deny",
+			},
+		});
+		(
+			mod as unknown as { checkBwrapAvailable: () => Promise<boolean> }
+		).checkBwrapAvailable = async () => true;
+
+		const result = await mod.evaluate(
+			makeToolEvent("Bash", { command: "echo hello" }),
+		);
+		expect(result.action).toBe(DecisionAction.MODIFY);
+		expect(result.patch?.toolArguments?.command).not.toContain("'--share-net'");
+	});
 });
 
 describe("EgressGuardModule", () => {
@@ -506,6 +722,23 @@ describe("EgressGuardModule", () => {
 		expect(result.action).toBe(DecisionAction.ALLOW);
 	});
 
+	it("supports wildcard domain patterns in allowlist", async () => {
+		const mod = new EgressGuardModule();
+		mod.configure({
+			allowedDomains: ["*.github.com"],
+		});
+
+		const allowedSubdomain = await mod.evaluate(
+			makeToolEvent("WebFetch", { url: "https://api.github.com/repos/bluzir/radius" }),
+		);
+		expect(allowedSubdomain.action).toBe(DecisionAction.ALLOW);
+
+		const deniedRoot = await mod.evaluate(
+			makeToolEvent("WebFetch", { url: "https://github.com/bluzir/radius" }),
+		);
+		expect(deniedRoot.action).toBe(DecisionAction.DENY);
+	});
+
 	it("denies non-allowlisted domain", async () => {
 		const mod = new EgressGuardModule();
 		mod.configure({
@@ -542,6 +775,68 @@ describe("EgressGuardModule", () => {
 			makeToolEvent("Bash", { command: "echo hello" }),
 		);
 		expect(result.action).toBe(DecisionAction.ALLOW);
+	});
+
+	it("enforces tool binding intersection with global allowlist", async () => {
+		const mod = new EgressGuardModule();
+		mod.configure({
+			allowedDomains: ["api.slack.com", "pastebin.com"],
+			bindingMode: "intersect",
+			toolBindings: {
+				SlackSend: {
+					allowedDomains: ["api.slack.com"],
+				},
+			},
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("SlackSend", {
+				url: "https://pastebin.com/raw/leak",
+			}),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("EGRESS_TOOL_BINDING_DENY");
+	});
+
+	it("denies bound tool when endpoint cannot be determined", async () => {
+		const mod = new EgressGuardModule();
+		mod.configure({
+			bindingMode: "intersect",
+			toolBindings: {
+				SlackSend: {
+					allowedDomains: ["api.slack.com"],
+				},
+			},
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("SlackSend", {
+				channel: "C123456",
+				text: "hello",
+			}),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("endpoint could not be determined");
+	});
+
+	it("keeps legacy behavior when binding mode is not intersect", async () => {
+		const mod = new EgressGuardModule();
+		mod.configure({
+			allowedDomains: ["api.slack.com"],
+			toolBindings: {
+				SlackSend: {
+					allowedDomains: ["api.slack.com"],
+				},
+			},
+		});
+
+		const result = await mod.evaluate(
+			makeToolEvent("SlackSend", {
+				url: "https://pastebin.com/raw/leak",
+			}),
+		);
+		expect(result.action).toBe(DecisionAction.ALLOW);
+		expect(result.reason).toContain("no outbound network detected");
 	});
 });
 
@@ -608,6 +903,100 @@ describe("RateBudgetModule", () => {
 		const event = {
 			...makeToolEvent("Read"),
 			sessionId: "persistent-budget-session",
+		};
+
+		expect((await first.evaluate(event)).action).toBe(DecisionAction.ALLOW);
+		expect((await second.evaluate(event)).action).toBe(DecisionAction.ALLOW);
+		expect((await third.evaluate(event)).action).toBe(DecisionAction.DENY);
+	});
+});
+
+describe("RepetitionGuardModule", () => {
+	it("denies identical tool calls once threshold is reached", async () => {
+		const mod = new RepetitionGuardModule();
+		mod.configure({
+			threshold: 3,
+			cooldownSec: 60,
+		});
+
+		const event = makeToolEvent("Read", { file_path: "/workspace/a.txt" });
+		expect((await mod.evaluate(event)).action).toBe(DecisionAction.ALLOW);
+		expect((await mod.evaluate(event)).action).toBe(DecisionAction.ALLOW);
+		const third = await mod.evaluate(event);
+		expect(third.action).toBe(DecisionAction.DENY);
+		expect(third.reason).toContain("REPETITION_GUARD_TRIGGER");
+	});
+
+	it("resets streak when tool arguments change", async () => {
+		const mod = new RepetitionGuardModule();
+		mod.configure({
+			threshold: 3,
+			cooldownSec: 60,
+		});
+
+		expect(
+			(await mod.evaluate(makeToolEvent("Read", { file_path: "/workspace/a.txt" })))
+				.action,
+		).toBe(DecisionAction.ALLOW);
+		expect(
+			(await mod.evaluate(makeToolEvent("Read", { file_path: "/workspace/b.txt" })))
+				.action,
+		).toBe(DecisionAction.ALLOW);
+		expect(
+			(await mod.evaluate(makeToolEvent("Read", { file_path: "/workspace/a.txt" })))
+				.action,
+		).toBe(DecisionAction.ALLOW);
+	});
+
+	it("supports alert mode on repetition trigger", async () => {
+		const mod = new RepetitionGuardModule();
+		mod.configure({
+			threshold: 2,
+			onRepeat: "alert",
+		});
+
+		await mod.evaluate(makeToolEvent("Read", { file_path: "/workspace/a.txt" }));
+		const second = await mod.evaluate(
+			makeToolEvent("Read", { file_path: "/workspace/a.txt" }),
+		);
+		expect(second.action).toBe(DecisionAction.ALERT);
+	});
+
+	it("persists repetition streak across instances with sqlite store", async () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-repeat-"));
+		const dbPath = path.join(tmpDir, "state.db");
+
+		const first = new RepetitionGuardModule();
+		first.configure({
+			threshold: 3,
+			store: {
+				engine: "sqlite",
+				path: dbPath,
+				required: true,
+			},
+		});
+		const second = new RepetitionGuardModule();
+		second.configure({
+			threshold: 3,
+			store: {
+				engine: "sqlite",
+				path: dbPath,
+				required: true,
+			},
+		});
+		const third = new RepetitionGuardModule();
+		third.configure({
+			threshold: 3,
+			store: {
+				engine: "sqlite",
+				path: dbPath,
+				required: true,
+			},
+		});
+
+		const event = {
+			...makeToolEvent("Read", { file_path: "/workspace/repeat.txt" }),
+			sessionId: "persistent-repeat-session",
 		};
 
 		expect((await first.evaluate(event)).action).toBe(DecisionAction.ALLOW);
@@ -782,6 +1171,53 @@ describe("createModules mode wiring", () => {
 
 		const toolPolicy = modules.find((m) => m.name === "tool_policy");
 		expect(toolPolicy?.mode).toBe("observe");
+	});
+
+	it("derives egress bindings from tool_policy rules", async () => {
+		const modules = createModules(
+			["tool_policy", "egress_guard"],
+			{
+				tool_policy: {
+					default: "deny",
+					rules: [
+						{
+							tool: "SlackSend",
+							action: "allow",
+							egress: {
+								allowedDomains: ["api.slack.com"],
+							},
+						},
+					],
+				},
+				egress_guard: {
+					bindingMode: "intersect",
+					allowedDomains: ["api.slack.com", "pastebin.com"],
+				},
+			},
+		);
+
+		const egress = modules.find((m) => m.name === "egress_guard");
+		expect(egress).toBeDefined();
+
+		const result = await (egress as EgressGuardModule).evaluate(
+			makeToolEvent("SlackSend", { url: "https://pastebin.com/raw/leak" }),
+		);
+		expect(result.action).toBe(DecisionAction.DENY);
+		expect(result.reason).toContain("EGRESS_TOOL_BINDING_DENY");
+	});
+
+	it("registers optional repetition and tripwire modules", () => {
+		const modules = createModules(
+			["repetition_guard", "tripwire_guard"],
+			{
+				repetition_guard: { threshold: 3 },
+				tripwire_guard: { fileTokens: ["/workspace/decoy.txt"] },
+			},
+		);
+		expect(modules.map((m) => m.name)).toEqual([
+			"repetition_guard",
+			"tripwire_guard",
+		]);
 	});
 });
 

@@ -1,4 +1,9 @@
-import { type Decision, type GuardEvent, GuardPhase } from "../types.js";
+import {
+	DecisionAction,
+	type Decision,
+	type GuardEvent,
+	GuardPhase,
+} from "../types.js";
 import { BaseModule } from "./base.js";
 
 type ArgType = "string" | "number" | "boolean" | "object" | "array";
@@ -21,11 +26,26 @@ interface ToolArgSchema {
 	argConstraints?: Record<string, ToolArgConstraint>;
 }
 
+interface ToolEgressBinding {
+	allowedDomains?: string[];
+	blockedDomains?: string[];
+	allowedIPs?: string[];
+	blockedIPs?: string[];
+	allowedPorts?: number[];
+	blockedPorts?: number[];
+}
+
 interface ToolRule {
 	tool: string;
-	action: "allow" | "deny";
+	action: "allow" | "deny" | "challenge";
 	when?: Record<string, unknown>;
 	schema?: ToolArgSchema;
+	egress?: ToolEgressBinding;
+	challenge?: {
+		channel?: "orchestrator" | "telegram" | "discord" | "http";
+		prompt?: string;
+		timeoutSec?: number;
+	};
 }
 
 interface ToolPolicyConfig {
@@ -76,6 +96,23 @@ export class ToolPolicyModule extends BaseModule {
 
 				if (rule.action === "deny") {
 					return this.deny(`tool "${toolName}" denied by policy rule`);
+				}
+				if (rule.action === "challenge") {
+					const channel = rule.challenge?.channel ?? "orchestrator";
+					const timeoutSec = Math.max(1, rule.challenge?.timeoutSec ?? 300);
+					return {
+						action: DecisionAction.CHALLENGE,
+						module: this.name,
+						reason: `tool "${toolName}" requires approval by policy rule`,
+						severity: "high",
+						challenge: {
+							channel,
+							prompt:
+								rule.challenge?.prompt ??
+								`Approve execution of "${toolName}"?`,
+							timeoutSec,
+						},
+					};
 				}
 				return this.allow(`tool "${toolName}" allowed by policy rule`);
 			}

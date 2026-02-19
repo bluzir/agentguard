@@ -187,12 +187,31 @@ export async function run(): Promise<void> {
             message: "transport=webhook requires approval.channels.telegram.webhookPublicUrl",
           });
         }
+
+        checks.push({
+          name: "Telegram webhook runtime",
+          status: "warn",
+          message:
+            "telegram transport=webhook is declared in config, but current resolver behavior is polling-centric. Validate topology or prefer HTTP approval bridge for single-bot setups",
+        });
       } else {
         checks.push({
           name: "Telegram transport",
           status: "ok",
           message: "polling",
         });
+
+        const claudeTelegramAdapter = (
+          config.adapters?.["claude-telegram"] as Record<string, unknown> | undefined
+        )?.enabled;
+        if (claudeTelegramAdapter === true) {
+          checks.push({
+            name: "Telegram polling topology",
+            status: "warn",
+            message:
+              "if Radius and orchestrator share the same bot token, polling consumers can race. Prefer separate bot token, webhook transport, or HTTP approvals bridge",
+          });
+        }
       }
     }
 

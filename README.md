@@ -58,11 +58,13 @@ Two commands and you have filesystem locks, shell blocking, secret redaction, ra
 
 ## Modules
 
-Eleven modules. They block or allow based on rules you write.
+Deterministic modules. Enable only what you need.
 
 | Module | What it does |
 |--------|-------------|
 | `kill_switch` | Emergency stop. Set an env var or drop a file, all risky actions halt. |
+| `self_defense` | Locks control-plane files (config/hooks) as immutable and detects tampering. |
+| `tripwire_guard` | Optional honeytokens. Touching a tripwire can deny immediately or trigger kill switch. |
 | `tool_policy` | Allow or deny by tool name. Optional argument schema validation. Default deny. |
 | `fs_guard` | Blocks file access outside allowed paths. `~/.ssh`, `~/.aws`, `/etc` are unreachable. |
 | `command_guard` | Matches shell patterns: `sudo`, `rm -rf`, pipe chains. Blocked before execution. |
@@ -70,8 +72,10 @@ Eleven modules. They block or allow based on rules you write.
 | `egress_guard` | Outbound network filter. Allowlist by domain, IP, port. Everything else is dropped. |
 | `output_dlp` | Catches secrets in output: AWS keys, tokens, private certs. Redacts or blocks. |
 | `rate_budget` | Caps tool calls per minute. Stops runaway loops. |
+| `repetition_guard` | Optional loop brake for identical tool calls repeated N times in a row. |
 | `skill_scanner` | Inspects skills at load time for injection payloads: zero-width chars, base64 blobs, exfil URLs. |
 | `approval_gate` | Routes risky operations to Telegram or an HTTP endpoint for human approval. |
+| `verdict_provider` | Optional external verdict provider integration (deterministic adapter contract). |
 | `audit` | Append-only log of every decision. Every action, every timestamp. |
 
 ## Three postures
@@ -197,6 +201,46 @@ moduleConfig:
       required: true
 ```
 
+Optional hardening modules (all opt-in):
+
+```yaml
+modules:
+  - self_defense
+  - tripwire_guard
+  - repetition_guard
+  - exec_sandbox
+
+moduleConfig:
+  self_defense:
+    immutablePaths:
+      - ./radius.yaml
+      - ./.radius/**
+    onWriteAttempt: deny
+    onHashMismatch: kill_switch
+
+  tripwire_guard:
+    fileTokens:
+      - /workspace/.tripwire/salary_2026.csv
+    envTokens:
+      - RADIUS_TRIPWIRE_SECRET
+    onTrip: kill_switch
+
+  repetition_guard:
+    threshold: 3
+    cooldownSec: 60
+    onRepeat: deny
+    store:
+      engine: sqlite
+      path: ./.radius/state.db
+      required: true
+
+  exec_sandbox:
+    engine: bwrap
+    shareNetwork: true
+    childPolicy:
+      network: deny
+```
+
 Template variables: `${workspace}`, `${HOME}`, `${CWD}`, and any environment variable.
 
 ## Approvals
@@ -206,6 +250,10 @@ Template variables: `${workspace}`, `${HOME}`, `${CWD}`, and any environment var
 Telegram callbacks: **Approve** (one action) · **Allow 30m** (temporary lease) · **Deny**
 
 HTTP expects a POST returning `{"status":"approved"}`, `{"status":"denied"}`, `{"status":"approved_temporary","ttlSec":1800}`, or `{"status":"error","reason":"..."}`.
+
+Pending workflow is also supported for bridge architectures:
+- initial POST may return `{"status":"pending","pollUrl":"https://.../status/<id>","retryAfterMs":500}`
+- RADIUS polls `pollUrl` until final status or timeout
 
 ```yaml
 approval:
@@ -241,6 +289,10 @@ moduleConfig:
 
 `Allow 30m` only bypasses repeated approval prompts. All other modules still enforce normally.
 
+Single-bot topology note (Telegram):
+- If your orchestrator already consumes Telegram updates for the same bot token, avoid running two polling consumers.
+- For one-bot setups, prefer `approval.channel=http` and bridge approvals through your existing bot service.
+
 ## OpenClaw subprocess compatibility
 
 OpenClaw hooks run as subprocesses, so in-memory state resets on every tool call. Anything that needs to persist across calls requires SQLite:
@@ -263,8 +315,10 @@ moduleConfig:
 | Module | Subprocess mode | Note |
 |--------|----------------|------|
 | `kill_switch`, `tool_policy`, `fs_guard`, `command_guard`, `audit` | Works | Stateless or file/env based |
+| `self_defense`, `tripwire_guard` | Works | File-system tripwire and immutable checks are subprocess-safe |
 | `approval_gate` + `Allow 30m` | Works | SQLite lease store persists across processes |
 | `rate_budget` | Works | SQLite store keeps counters across processes |
+| `repetition_guard` | Works | Use SQLite store for cross-process streak tracking |
 | `output_dlp` | Partial | Requires `PostToolUse` hook wiring |
 | `egress_guard` | Works | Preflight policy; kernel egress needs OS firewall |
 | `exec_sandbox` | Platform dependent | Linux `bwrap`; non-Linux needs equivalent |

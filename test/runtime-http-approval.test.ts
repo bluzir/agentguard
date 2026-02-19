@@ -192,4 +192,56 @@ describe("Runtime HTTP approval resolution", () => {
       clearApprovalLeases();
     }
   });
+
+  it("supports pending HTTP approvals via pollUrl", async () => {
+    clearApprovalLeases();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-http-runtime-"));
+    const configPath = path.join(tmpDir, "radius.yaml");
+    makeConfig(configPath);
+
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      calls.push({ url, method });
+
+      if (method === "POST" && url === "https://approvals.example/resolve") {
+        return httpResponse({
+          status: "pending",
+          pollUrl: "https://approvals.example/status/approval-1",
+          retryAfterMs: 1,
+        });
+      }
+
+      if (method === "GET" && url === "https://approvals.example/status/approval-1") {
+        return httpResponse({ status: "approved", reason: "approved on poll" });
+      }
+
+      throw new Error(`Unexpected HTTP approval call: ${method} ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const runtime = new RadiusRuntime({
+        configPath,
+        framework: "openclaw",
+      });
+
+      const response = (await runtime.evaluate({
+        hook_type: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "echo hi" },
+        session_id: "http-pending",
+      })) as { decision: string; reason?: string };
+
+      expect(response.decision).toBe("allow");
+      expect(calls).toEqual([
+        { url: "https://approvals.example/resolve", method: "POST" },
+        { url: "https://approvals.example/status/approval-1", method: "GET" },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearApprovalLeases();
+    }
+  });
 });

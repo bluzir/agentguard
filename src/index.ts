@@ -59,6 +59,7 @@ export { loadConfig, getProfile, PROFILES } from "./config/index.js";
 export {
   BaseModule,
   KillSwitchModule,
+  SelfDefenseModule,
   ToolPolicyModule,
   FsGuardModule,
   CommandGuardModule,
@@ -66,6 +67,8 @@ export {
   EgressGuardModule,
   OutputDlpModule,
   RateBudgetModule,
+  RepetitionGuardModule,
+  TripwireGuardModule,
   ApprovalGateModule,
   AuditModule,
   SkillScannerModule,

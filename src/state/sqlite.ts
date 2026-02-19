@@ -5,6 +5,7 @@ import path from "node:path";
 const require = createRequire(import.meta.url);
 const MISSING_AGENT_SENTINEL = "__radius_agent_missing__";
 const RATE_BUDGET_RETENTION_MS = 24 * 60 * 60 * 1000;
+const REPETITION_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 interface SqliteStatement {
   run(...params: unknown[]): unknown;
@@ -33,6 +34,12 @@ interface CountRow {
   count: number | bigint;
 }
 
+interface RepetitionRow {
+  fingerprint: string;
+  streak: number | bigint;
+  lastSeenMs: number | bigint;
+}
+
 export interface SqliteStoreConfig {
   path?: string;
   required?: boolean;
@@ -59,6 +66,17 @@ export interface RateBudgetConsumeResult {
   count: number;
 }
 
+export interface RepetitionConsumeInput {
+  bucketKey: string;
+  fingerprint: string;
+  nowMs: number;
+  cooldownMs: number;
+}
+
+export interface RepetitionConsumeResult {
+  count: number;
+}
+
 export interface SqliteStateStore {
   insertApprovalLease(lease: StoredApprovalLease): void;
   findActiveApprovalLease(input: {
@@ -71,6 +89,9 @@ export interface SqliteStateStore {
   consumeRateBudget(
     input: RateBudgetConsumeInput,
   ): RateBudgetConsumeResult;
+  consumeRepetition(
+    input: RepetitionConsumeInput,
+  ): RepetitionConsumeResult;
 }
 
 class SqliteStateStoreImpl implements SqliteStateStore {
@@ -83,6 +104,10 @@ class SqliteStateStoreImpl implements SqliteStateStore {
   private pruneBudgetRetentionStmt: SqliteStatement;
   private countBudgetStmt: SqliteStatement;
   private insertBudgetStmt: SqliteStatement;
+
+  private pruneRepetitionRetentionStmt: SqliteStatement;
+  private getRepetitionStateStmt: SqliteStatement;
+  private upsertRepetitionStateStmt: SqliteStatement;
 
   constructor(private readonly db: SqliteDatabase) {
     this.db.exec("PRAGMA journal_mode = WAL;");
@@ -113,6 +138,15 @@ class SqliteStateStoreImpl implements SqliteStateStore {
         ON rate_budget_events(bucket_key, ts_ms);
       CREATE INDEX IF NOT EXISTS idx_rate_budget_expiry
         ON rate_budget_events(ts_ms);
+
+      CREATE TABLE IF NOT EXISTS repetition_state (
+        bucket_key TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        streak INTEGER NOT NULL,
+        last_seen_ms INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_repetition_state_last_seen
+        ON repetition_state(last_seen_ms);
     `);
 
     this.deleteExpiredApprovalLeasesStmt = this.db.prepare(
@@ -161,6 +195,27 @@ class SqliteStateStoreImpl implements SqliteStateStore {
     this.insertBudgetStmt = this.db.prepare(
       "INSERT INTO rate_budget_events (bucket_key, ts_ms) VALUES (?, ?)",
     );
+
+    this.pruneRepetitionRetentionStmt = this.db.prepare(
+      "DELETE FROM repetition_state WHERE last_seen_ms <= ?",
+    );
+    this.getRepetitionStateStmt = this.db.prepare(`
+      SELECT
+        fingerprint,
+        streak,
+        last_seen_ms AS lastSeenMs
+      FROM repetition_state
+      WHERE bucket_key = ?
+      LIMIT 1
+    `);
+    this.upsertRepetitionStateStmt = this.db.prepare(`
+      INSERT INTO repetition_state (bucket_key, fingerprint, streak, last_seen_ms)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(bucket_key) DO UPDATE SET
+        fingerprint = excluded.fingerprint,
+        streak = excluded.streak,
+        last_seen_ms = excluded.last_seen_ms
+    `);
   }
 
   insertApprovalLease(lease: StoredApprovalLease): void {
@@ -231,6 +286,39 @@ class SqliteStateStoreImpl implements SqliteStateStore {
         allowed: true,
         count: countBefore + 1,
       };
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // noop: rollback best-effort only
+      }
+      throw error;
+    }
+  }
+
+  consumeRepetition(input: RepetitionConsumeInput): RepetitionConsumeResult {
+    const retentionCutoff = input.nowMs - REPETITION_RETENTION_MS;
+
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.pruneRepetitionRetentionStmt.run(retentionCutoff);
+
+      const row = this.getRepetitionStateStmt.get<RepetitionRow>(input.bucketKey);
+      const sameFingerprint = row?.fingerprint === input.fingerprint;
+      const withinCooldown =
+        row != null &&
+        input.nowMs - Number(row.lastSeenMs) <= input.cooldownMs;
+      const nextCount =
+        sameFingerprint && withinCooldown ? Number(row?.streak ?? 0) + 1 : 1;
+
+      this.upsertRepetitionStateStmt.run(
+        input.bucketKey,
+        input.fingerprint,
+        nextCount,
+        input.nowMs,
+      );
+      this.db.exec("COMMIT");
+      return { count: nextCount };
     } catch (error) {
       try {
         this.db.exec("ROLLBACK");
