@@ -1,11 +1,24 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { stringify as toYaml } from "yaml";
 import { getProfile, resolveProfileName } from "../config/profiles.js";
 import { generateWiringArtifacts } from "./install.js";
 
+const require = createRequire(import.meta.url);
 const FRAMEWORKS = ["openclaw", "nanobot", "claude-telegram", "generic"] as const;
 const APPROVAL_CHANNELS = ["telegram", "http"] as const;
+
+function isNodeSqliteAvailable(): boolean {
+  try {
+    const sqliteModule = require("node:sqlite") as {
+      DatabaseSync?: unknown;
+    };
+    return typeof sqliteModule.DatabaseSync === "function";
+  } catch {
+    return false;
+  }
+}
 
 function parseArgs(): {
   framework: string;
@@ -50,6 +63,7 @@ function parseArgs(): {
 
 export async function run(): Promise<void> {
   const { framework, profile, mode, output, approvals } = parseArgs();
+  const sqliteAvailable = isNodeSqliteAvailable();
 
   if (!FRAMEWORKS.includes(framework as (typeof FRAMEWORKS)[number])) {
     throw new Error(`unknown framework: "${framework}". Available: ${FRAMEWORKS.join(", ")}`);
@@ -114,11 +128,11 @@ export async function run(): Promise<void> {
           maxTemporaryGrantTtlSec: 1800,
           onTimeout: "deny",
           onConnectorError: "deny",
-          store: {
-            engine: "sqlite",
-            path: "./.radius/state.db",
-            required: true,
-          },
+              store: {
+                engine: "sqlite",
+                path: "./.radius/state.db",
+                required: sqliteAvailable,
+              },
           channels: {
             telegram: {
               enabled: true,
@@ -146,11 +160,11 @@ export async function run(): Promise<void> {
             maxTemporaryGrantTtlSec: 1800,
             onTimeout: "deny",
             onConnectorError: "deny",
-            store: {
-              engine: "sqlite",
-              path: "./.radius/state.db",
-              required: true,
-            },
+              store: {
+                engine: "sqlite",
+                path: "./.radius/state.db",
+                required: sqliteAvailable,
+              },
             channels: {
               telegram: {
                 enabled: false,
@@ -177,11 +191,11 @@ export async function run(): Promise<void> {
           maxTemporaryGrantTtlSec: 1800,
           onTimeout: "deny",
           onConnectorError: "deny",
-          store: {
-            engine: "sqlite",
-            path: "./.radius/state.db",
-            required: true,
-          },
+              store: {
+                engine: "sqlite",
+                path: "./.radius/state.db",
+                required: sqliteAvailable,
+              },
           channels: {
             telegram: {
               enabled: false,
@@ -312,7 +326,7 @@ export async function run(): Promise<void> {
         store: {
           engine: "sqlite",
           path: "./.radius/state.db",
-          required: true,
+          required: sqliteAvailable,
         },
       },
     },

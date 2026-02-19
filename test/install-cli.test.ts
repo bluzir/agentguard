@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { run as initRun } from "../src/cli/init.js";
 import { generateWiringArtifacts } from "../src/cli/install.js";
+import { isNodeSqliteAvailable } from "./test-utils.js";
 
 function withArgv(argv: string[], fn: () => Promise<void>): Promise<void> {
 	const previous = process.argv;
@@ -113,5 +115,37 @@ describe("install wiring", () => {
 			fs.existsSync(path.join(path.dirname(configPath), ".radius", "openclaw-hook.command.sh")),
 		).toBe(true);
 	});
-});
 
+	it("init sets sqlite required flag based on runtime availability", async () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-init-sqlite-"));
+		const configPath = path.join(tmpDir, "radius.yaml");
+		const sqliteAvailable = isNodeSqliteAvailable();
+
+		await withArgv(
+			[
+				"node",
+				"agentradius",
+				"init",
+				"--framework",
+				"generic",
+				"--profile",
+				"standard",
+				"--output",
+				configPath,
+			],
+			async () => {
+				await initRun();
+			},
+		);
+
+		const config = parseYaml(fs.readFileSync(configPath, "utf-8")) as {
+			moduleConfig?: {
+				rate_budget?: {
+					store?: { required?: boolean };
+				};
+			};
+		};
+
+		expect(config.moduleConfig?.rate_budget?.store?.required).toBe(sqliteAvailable);
+	});
+});
