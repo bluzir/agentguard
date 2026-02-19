@@ -5,6 +5,7 @@ import { stringify as toYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { clearApprovalLeases } from "../src/approval/lease-store.js";
 import { RadiusRuntime } from "../src/runtime.js";
+import { isNodeSqliteAvailable } from "./test-utils.js";
 
 function telegramResponse(result: unknown): Response {
   return new Response(JSON.stringify({ ok: true, result }), {
@@ -14,6 +15,7 @@ function telegramResponse(result: unknown): Response {
 }
 
 function makeConfig(configPath: string, stateDbPath: string): void {
+  const sqliteAvailable = isNodeSqliteAvailable();
   const config = {
     global: {
       profile: "standard",
@@ -28,11 +30,16 @@ function makeConfig(configPath: string, stateDbPath: string): void {
       waitTimeoutSec: 5,
       onTimeout: "deny",
       onConnectorError: "deny",
-      store: {
-        engine: "sqlite",
-        path: stateDbPath,
-        required: true,
-      },
+      store: sqliteAvailable
+        ? {
+            engine: "sqlite",
+            path: stateDbPath,
+            required: true,
+          }
+        : {
+            engine: "memory",
+            required: false,
+          },
       channels: {
         telegram: {
           enabled: true,

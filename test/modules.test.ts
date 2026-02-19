@@ -19,6 +19,7 @@ import { ToolPolicyModule } from "../src/modules/tool-policy.js";
 import { TripwireGuardModule } from "../src/modules/tripwire-guard.js";
 import { VerdictProviderModule } from "../src/modules/verdict-provider.js";
 import { DecisionAction, type GuardEvent, GuardPhase } from "../src/types.js";
+import { isNodeSqliteAvailable } from "./test-utils.js";
 
 function makeToolEvent(
 	toolName: string,
@@ -49,6 +50,8 @@ function makeLoadEvent(
 		...overrides,
 	};
 }
+
+const HAS_NODE_SQLITE = isNodeSqliteAvailable();
 
 describe("ToolPolicyModule", () => {
 	it("denies unknown tools by default", async () => {
@@ -864,6 +867,9 @@ describe("RateBudgetModule", () => {
 	});
 
 	it("persists budget across module instances with sqlite store", async () => {
+		if (!HAS_NODE_SQLITE) {
+			return;
+		}
 		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-budget-"));
 		const dbPath = path.join(tmpDir, "state.db");
 
@@ -963,6 +969,9 @@ describe("RepetitionGuardModule", () => {
 	});
 
 	it("persists repetition streak across instances with sqlite store", async () => {
+		if (!HAS_NODE_SQLITE) {
+			return;
+		}
 		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "radius-repeat-"));
 		const dbPath = path.join(tmpDir, "state.db");
 
